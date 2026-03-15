@@ -28,4 +28,4 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
-OPENAI_API_KEY = "sk-b39265b0bf304271b59aaaf0572869d0"
+DEEPSEEK_API_KEY = "sk-b39265b0bf304271b59aaaf0572869d0"
