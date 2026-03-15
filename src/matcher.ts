@@ -61,7 +61,7 @@ export function match(query: string, manifest: Manifest): MatchResult {
     }
   }
 
-  if (!best || bestScore < 15) {
+  if (!best || bestScore < 50) {
     return {
       capability: null,
       confidence: bestScore,
