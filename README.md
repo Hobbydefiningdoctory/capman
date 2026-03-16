@@ -1,4 +1,4 @@
-# capman — Capability Manifest Engine
+# Capman — Capability Manifest Engine
 
 Let AI agents interact with your app **without navigating the UI**.
 
