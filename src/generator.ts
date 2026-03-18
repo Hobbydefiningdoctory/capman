@@ -2,6 +2,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import type { CapmanConfig, Manifest, ValidationResult } from './types'
+import { validateConfig, validateManifest } from './schema'
 
 export function generate(config: CapmanConfig): Manifest {
   return {
@@ -21,7 +22,17 @@ export function loadConfig(configPath?: string): CapmanConfig {
     const resolved = path.resolve(process.cwd(), candidate)
     if (fs.existsSync(resolved)) {
       const mod = require(resolved)
-      return mod.default ?? mod
+      const raw = mod.default ?? mod
+
+      const check = validateConfig(raw)
+      if (!check.valid) {
+        throw new Error(
+          `Invalid capman config at ${resolved}:\n` +
+          check.errors.map(e => `  • ${e}`).join('\n')
+        )
+      }
+
+      return raw
     }
   }
 
@@ -41,7 +52,17 @@ export function readManifest(manifestPath = 'manifest.json'): Manifest {
   if (!fs.existsSync(resolved)) {
     throw new Error(`No manifest found at ${resolved}. Run: node bin/capman.js generate`)
   }
-  return JSON.parse(fs.readFileSync(resolved, 'utf-8')) as Manifest
+  const raw = JSON.parse(fs.readFileSync(resolved, 'utf-8'))
+
+  const check = validateManifest(raw)
+  if (!check.valid) {
+    throw new Error(
+      `Invalid manifest at ${resolved}:\n` +
+      check.errors.map(e => `  • ${e}`).join('\n')
+    )
+  }
+
+  return raw as Manifest
 }
 
 export function validate(manifest: Manifest): ValidationResult {
