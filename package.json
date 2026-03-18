@@ -7,12 +7,18 @@
   "bin": {
     "capman": "./bin/capman.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "CONTRIBUTING.md"
+  ],
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "example": "tsx examples/basic.ts",
+    "build":    "tsc",
+    "dev":      "tsc --watch",
+    "example":  "tsx examples/basic.ts",
     "validate": "node bin/capman.js validate",
-    "inspect": "node bin/capman.js inspect"
+    "inspect":  "node bin/capman.js inspect"
   },
   "keywords": [
     "ai",
@@ -24,10 +30,9 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "catalog:",
-    "prettier": "^3.8.1",
-    "tsx": "catalog:",
-    "typescript": "~5.9.2"
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "dotenv": "^17.3.1"
