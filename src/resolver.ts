@@ -4,6 +4,7 @@ export interface ResolveOptions {
   baseUrl?: string
   fetch?: typeof globalThis.fetch
   dryRun?: boolean
+  headers?: Record<string, string>
 }
 
 export async function resolve(
@@ -80,9 +81,13 @@ async function resolveApi(
   }
 
   await Promise.all(
-    apiCalls
-      .filter(c => c.method === 'GET')
-      .map(c => fetchFn(c.url, { method: c.method }))
+    apiCalls.map(c => fetchFn(c.url, {
+      method: c.method,
+      headers: options.headers ?? {},
+      body: ['POST', 'PUT', 'PATCH'].includes(c.method)
+        ? JSON.stringify(c.params)
+        : undefined,
+    }))
   )
 
   return { success: true, resolverType: 'api', apiCalls }

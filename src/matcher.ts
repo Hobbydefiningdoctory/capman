@@ -33,9 +33,59 @@ function resolverToIntent(cap: Capability): MatchResult['intent'] {
 
 function extractParams(query: string, cap: Capability): Record<string, string | null> {
   const result: Record<string, string | null> = {}
+  const q = query.toLowerCase()
+
   for (const param of cap.params) {
-    result[param.name] = param.source === 'session' ? '[from_session]' : null
+    // Session params come from auth context, not query
+    if (param.source === 'session') {
+      result[param.name] = '[from_session]'
+      continue
+    }
+
+    if (param.source !== 'user_query') {
+      result[param.name] = null
+      continue
+    }
+
+    // Try to extract value after known keywords
+    // e.g. "profile for johndoe" → johndoe
+    //      "articles by jane"   → jane
+    //      "tag javascript"     → javascript
+    const keywords = [
+      `for `, `by `, `about `, `named `, `called `,
+      `tag `, `user `, `author `, `slug `, `id `,
+      `to `, `from `, `with `,
+    ]
+
+    let extracted: string | null = null
+
+    for (const kw of keywords) {
+      const idx = q.indexOf(kw)
+      if (idx !== -1) {
+        const after = query.slice(idx + kw.length).trim()
+        const token = after.split(/\s+/)[0]
+        if (token && token.length > 1) {
+          extracted = token.replace(/[^a-zA-Z0-9-_@.]/g, '')
+          break
+        }
+      }
+    }
+
+    // Fallback — grab last meaningful word in the query
+    if (!extracted) {
+      const words = query.trim().split(/\s+/)
+      const stopwords = new Set([
+        'show', 'me', 'the', 'get', 'find', 'fetch', 'give',
+        'what', 'is', 'are', 'a', 'an', 'my', 'i', 'want',
+        'to', 'please', 'can', 'you', 'open', 'take', 'go',
+      ])
+      const meaningful = words.filter(w => !stopwords.has(w.toLowerCase()))
+      extracted = meaningful[meaningful.length - 1] ?? null
+    }
+
+    result[param.name] = extracted
   }
+
   return result
 }
 

@@ -5,7 +5,7 @@ import type { CapmanConfig, Manifest, ValidationResult } from './types'
 
 export function generate(config: CapmanConfig): Manifest {
   return {
-    version: '0.1.0',
+    version: require('../package.json').version,
     app: config.app,
     generatedAt: new Date().toISOString(),
     capabilities: config.capabilities,
