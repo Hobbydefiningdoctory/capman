@@ -38,6 +38,6 @@
   },
   "dependencies": {
     "dotenv": "^17.3.1",
-    "zod": "catalog:"
+    "zod": "^3.23.0"
   }
 }
