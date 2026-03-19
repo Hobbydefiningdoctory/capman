@@ -1,3 +1,6 @@
+export { setLogLevel } from './logger'
+export type { LogLevel } from './logger'
+
 export type {
   Capability,
   CapabilityParam,

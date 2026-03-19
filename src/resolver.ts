@@ -1,4 +1,5 @@
 import type { MatchResult, ResolveResult, ApiResolver, NavResolver } from './types'
+import { logger } from './logger'
 
 export interface ResolveOptions {
   baseUrl?: string
@@ -15,6 +16,7 @@ export async function resolve(
   const { capability } = matchResult
 
   if (!capability) {
+    logger.warn('resolve() called with no matched capability')
     return {
       success: false,
       resolverType: null,
@@ -23,6 +25,9 @@ export async function resolve(
   }
 
   const resolver = capability.resolver
+  logger.info(`Resolving capability "${capability.id}" via ${resolver.type} resolver`)
+  logger.debug(`Params: ${JSON.stringify(params)}`)
+  logger.debug(`Options: baseUrl=${options.baseUrl} dryRun=${options.dryRun}`)
 
   try {
     switch (resolver.type) {
@@ -33,6 +38,7 @@ export async function resolve(
         return resolveNav(resolver, params)
 
       case 'hybrid': {
+        logger.debug('Hybrid resolver — running API and nav in parallel')
         const [apiResult, navResult] = await Promise.all([
           resolveApi(resolver.api as ApiResolver, params, options),
           Promise.resolve(resolveNav(resolver.nav as NavResolver, params)),
@@ -47,6 +53,7 @@ export async function resolve(
       }
     }
   } catch (err) {
+    logger.error(`Resolution failed for "${capability.id}": ${err}`)
     return {
       success: false,
       resolverType: resolver.type,
@@ -54,7 +61,6 @@ export async function resolve(
     }
   }
 }
-
 async function resolveApi(
   resolver: ApiResolver | Omit<ApiResolver, 'type'>,
   params: Record<string, unknown>,

@@ -1,4 +1,5 @@
 import type { Capability, Manifest, MatchResult } from './types'
+import { logger } from './logger'
 
 const STOPWORDS = new Set([
   'show', 'me', 'the', 'get', 'find', 'fetch', 'give', 'please',
@@ -119,6 +120,7 @@ function extractParams(query: string, cap: Capability): Record<string, string | 
 
 export function match(query: string, manifest: Manifest): MatchResult {
   if (!query?.trim()) {
+    logger.warn('Empty query received')
     return {
       capability: null,
       confidence: 0,
@@ -128,11 +130,15 @@ export function match(query: string, manifest: Manifest): MatchResult {
     }
   }
 
+  logger.info(`Matching query: "${query}"`)
+  logger.debug(`Manifest has ${manifest.capabilities.length} capabilities`)
+
   let best: Capability | null = null
   let bestScore = 0
 
   for (const cap of manifest.capabilities) {
     const score = scoreCapability(query, cap)
+    logger.debug(`  scored "${cap.id}": ${score}%`)
     if (score > bestScore) {
       bestScore = score
       best = cap
@@ -140,6 +146,7 @@ export function match(query: string, manifest: Manifest): MatchResult {
   }
 
   if (!best || bestScore < 50) {
+    logger.info(`No match above threshold (best: ${bestScore}% for "${best?.id ?? 'none'}")`)
     return {
       capability: null,
       confidence: bestScore,
@@ -149,11 +156,15 @@ export function match(query: string, manifest: Manifest): MatchResult {
     }
   }
 
+  const params = extractParams(query, best)
+  logger.info(`Matched "${best.id}" at ${bestScore}% confidence`)
+  logger.debug(`Extracted params: ${JSON.stringify(params)}`)
+
   return {
     capability: best,
     confidence: bestScore,
     intent: resolverToIntent(best),
-    extractedParams: extractParams(query, best),
+    extractedParams: params,
     reasoning: `Matched "${best.id}" via keyword scoring (score: ${bestScore})`,
   }
 }
