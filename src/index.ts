@@ -34,7 +34,7 @@ export {
 export type { LLMMatcherOptions } from './matcher'
 
 export { resolve } from './resolver'
-export type { ResolveOptions } from './resolver'
+export type { ResolveOptions, AuthContext } from './resolver'
 
 // ─── Convenience: ask() — match + resolve in one call ────────────────────────
 

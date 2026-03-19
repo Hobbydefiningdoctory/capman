@@ -18,26 +18,54 @@ export function loadConfig(configPath?: string): CapmanConfig {
     ? [configPath]
     : ['capman.config.js', 'capman.config.json']
 
+  // If a specific path was given but doesn't exist — clear error
+  if (configPath) {
+    const resolved = path.resolve(process.cwd(), configPath)
+    if (!fs.existsSync(resolved)) {
+      throw new Error(
+        `Config file not found at: ${resolved}\n` +
+        `Check the path and try again.`
+      )
+    }
+  }
+
   for (const candidate of candidates) {
     const resolved = path.resolve(process.cwd(), candidate)
     if (fs.existsSync(resolved)) {
-      const mod = require(resolved)
-      const raw = mod.default ?? mod
+      let raw: unknown
 
+      // Catch syntax errors in config file
+      try {
+        const mod = require(resolved)
+        raw = mod.default ?? mod
+      } catch (err) {
+        throw new Error(
+          `Failed to load config at ${resolved}:\n` +
+          `  ${err instanceof Error ? err.message : String(err)}\n\n` +
+          `Check your config file for syntax errors.`
+        )
+      }
+
+      // Catch invalid config structure
       const check = validateConfig(raw)
       if (!check.valid) {
         throw new Error(
           `Invalid capman config at ${resolved}:\n` +
-          check.errors.map(e => `  • ${e}`).join('\n')
+          check.errors.map(e => `  • ${e}`).join('\n') + '\n\n' +
+          `Run: node bin/capman.js init  to see a valid example config.`
         )
       }
 
-      return raw
+      return raw as CapmanConfig
     }
   }
 
+  // No config found at all
   throw new Error(
-    `No config file found. Run: node bin/capman.js init`
+    `No capman config file found.\n\n` +
+    `Expected one of:\n` +
+    candidates.map(c => `  • ${c}`).join('\n') + '\n\n' +
+    `Run: node bin/capman.js init  to create one.`
   )
 }
 

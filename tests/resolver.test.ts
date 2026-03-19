@@ -135,4 +135,88 @@ describe('resolve()', () => {
     })
   })
 
+  describe('Privacy enforcement', () => {
+    const authConfig: CapmanConfig = {
+      app: 'test-app',
+      capabilities: [
+        {
+          id: 'get_public_data',
+          name: 'Get public data',
+          description: 'Fetch publicly available data from the app.',
+          examples: ['show public data'],
+          params: [],
+          returns: ['data'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/public' }] },
+          privacy: { level: 'public' },
+        },
+        {
+          id: 'get_private_data',
+          name: 'Get private data',
+          description: 'Fetch private data belonging to the authenticated user.',
+          examples: ['show my private data'],
+          params: [],
+          returns: ['data'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/private' }] },
+          privacy: { level: 'user_owned' },
+        },
+        {
+          id: 'get_admin_data',
+          name: 'Get admin data',
+          description: 'Fetch sensitive admin data restricted to admin users only.',
+          examples: ['show admin data'],
+          params: [],
+          returns: ['data'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/admin' }] },
+          privacy: { level: 'admin' },
+        },
+      ],
+    }
+
+    const authManifest = generate(authConfig)
+
+    it('allows public capability without auth', async () => {
+      const matchResult = match('show public data', authManifest)
+      const result = await resolve(matchResult, {}, { dryRun: true })
+      expect(result.success).toBe(true)
+    })
+
+    it('blocks user_owned capability without auth', async () => {
+      const matchResult = match('show my private data', authManifest)
+      const result = await resolve(matchResult, {}, {
+        dryRun: true,
+        auth: { isAuthenticated: false }
+      })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('requires authentication')
+    })
+
+    it('allows user_owned capability with auth', async () => {
+      const matchResult = match('show my private data', authManifest)
+      const result = await resolve(matchResult, {}, {
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'user', userId: 'user-123' }
+      })
+      expect(result.success).toBe(true)
+    })
+
+    it('blocks admin capability without admin role', async () => {
+      const matchResult = match('show admin data', authManifest)
+      const result = await resolve(matchResult, {}, {
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'user' }
+      })
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('requires admin role')
+    })
+
+    it('allows admin capability with admin role', async () => {
+      const matchResult = match('show admin data', authManifest)
+      const result = await resolve(matchResult, {}, {
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'admin' }
+      })
+      expect(result.success).toBe(true)
+    })
+  })
+
 })

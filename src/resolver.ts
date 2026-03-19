@@ -1,12 +1,54 @@
 import type { MatchResult, ResolveResult, ApiResolver, NavResolver } from './types'
 import { logger } from './logger'
 
+// ─── Privacy enforcement ──────────────────────────────────────────────────────
+
+export interface AuthContext {
+  /** Whether the current request is authenticated */
+  isAuthenticated: boolean
+  /** Current user's role */
+  role?: 'user' | 'admin'
+  /** Current user's ID — injected into session params */
+  userId?: string
+}
+
 export interface ResolveOptions {
   baseUrl?: string
   fetch?: typeof globalThis.fetch
   dryRun?: boolean
   headers?: Record<string, string>
+  /** Auth context — required for user_owned and admin capabilities */
+  auth?: AuthContext
 }
+
+function checkPrivacy(
+  capability: import('./types').Capability,
+  auth?: AuthContext
+): string | null {
+  const level = capability.privacy.level
+
+  if (level === 'public') return null
+
+  if (level === 'user_owned') {
+    if (!auth?.isAuthenticated) {
+      return `Capability "${capability.id}" requires authentication (privacy: user_owned)`
+    }
+    return null
+  }
+
+  if (level === 'admin') {
+    if (!auth?.isAuthenticated) {
+      return `Capability "${capability.id}" requires authentication (privacy: admin)`
+    }
+    if (auth.role !== 'admin') {
+      return `Capability "${capability.id}" requires admin role (current role: ${auth.role ?? 'none'})`
+    }
+    return null
+  }
+
+  return null
+}
+
 
 export async function resolve(
   matchResult: MatchResult,
@@ -21,6 +63,17 @@ export async function resolve(
       success: false,
       resolverType: null,
       error: 'No capability matched — cannot resolve',
+    }
+  }
+
+  // ── Privacy enforcement ──────────────────────────────────────────────────
+  const privacyError = checkPrivacy(capability, options.auth)
+  if (privacyError) {
+    logger.warn(`Privacy check failed: ${privacyError}`)
+    return {
+      success: false,
+      resolverType: null,
+      error: privacyError,
     }
   }
 
