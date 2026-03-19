@@ -220,7 +220,7 @@ Respond ONLY in valid JSON (no markdown):
       reasoning: parsed.reasoning,
     }
   } catch (err) {
-    console.warn('[capman] LLM match failed, falling back to keyword matcher:', err)
+    logger.warn(`LLM match failed, falling back to keyword matcher: ${err}`)
     return match(query, manifest)
   }
 }
