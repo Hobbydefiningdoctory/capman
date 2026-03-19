@@ -1,0 +1,132 @@
+import { describe, it, expect } from 'vitest'
+import { generate, match } from '../src/index'
+import type { CapmanConfig } from '../src/types'
+
+// ─── Minimal test manifest ────────────────────────────────────────────────────
+
+const config: CapmanConfig = {
+  app: 'test-app',
+  capabilities: [
+    {
+      id: 'get_articles',
+      name: 'Get articles',
+      description: 'Fetch a list of articles from the platform.',
+      examples: ['Show me articles', 'List all posts', 'Get latest articles'],
+      params: [],
+      returns: ['articles'],
+      resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/articles' }] },
+      privacy: { level: 'public' },
+    },
+    {
+      id: 'get_user_profile',
+      name: 'Get user profile',
+      description: 'Fetch the public profile of a user by username.',
+      examples: ['Show profile for johndoe', 'Get user jane', 'Who is techwriter42'],
+      params: [
+        { name: 'username', description: 'Username to look up', required: true, source: 'user_query' }
+      ],
+      returns: ['profile'],
+      resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/profiles/{username}' }] },
+      privacy: { level: 'public' },
+    },
+    {
+      id: 'navigate_to_screen',
+      name: 'Navigate to screen',
+      description: 'Route the user to a specific page in the app.',
+      examples: ['Take me to dashboard', 'Open settings', 'Go to profile page'],
+      params: [
+        { name: 'destination', description: 'Target screen', required: true, source: 'user_query' }
+      ],
+      returns: ['deep_link'],
+      resolver: { type: 'nav', destination: '{destination}' },
+      privacy: { level: 'public' },
+    },
+  ],
+}
+
+const manifest = generate(config)
+
+// ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe('match()', () => {
+
+  describe('clear queries', () => {
+    it('matches article query at high confidence', () => {
+      const result = match('Show me articles', manifest)
+      expect(result.capability?.id).toBe('get_articles')
+      expect(result.confidence).toBeGreaterThanOrEqual(50)
+      expect(result.intent).toBe('retrieval')
+    })
+
+    it('matches profile query at high confidence', () => {
+      const result = match('Show profile for johndoe', manifest)
+      expect(result.capability?.id).toBe('get_user_profile')
+      expect(result.confidence).toBeGreaterThanOrEqual(50)
+    })
+
+    it('matches navigation query', () => {
+      const result = match('Take me to dashboard', manifest)
+      expect(result.capability?.id).toBe('navigate_to_screen')
+      expect(result.intent).toBe('navigation')
+    })
+  })
+
+  describe('out of scope queries', () => {
+    it('rejects irrelevant query', () => {
+      const result = match('Is the server down?', manifest)
+      expect(result.capability).toBeNull()
+      expect(result.intent).toBe('out_of_scope')
+    })
+
+    it('rejects empty query', () => {
+      const result = match('', manifest)
+      expect(result.capability).toBeNull()
+      expect(result.confidence).toBe(0)
+    })
+
+    it('rejects weather query', () => {
+      const result = match('What is the weather today?', manifest)
+      expect(result.capability).toBeNull()
+      expect(result.intent).toBe('out_of_scope')
+    })
+  })
+
+  describe('param extraction', () => {
+    it('extracts username from profile query', () => {
+      const result = match('Show profile for johndoe', manifest)
+      expect(result.extractedParams.username).toBe('johndoe')
+    })
+
+    it('marks session params correctly', () => {
+      const sessionConfig: CapmanConfig = {
+        app: 'test',
+        capabilities: [{
+          id: 'get_my_data',
+          name: 'Get my data',
+          description: 'Fetch data for the current authenticated user.',
+          examples: ['show my data'],
+          params: [{ name: 'user_id', description: 'User ID', required: true, source: 'session' }],
+          returns: ['data'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/me' }] },
+          privacy: { level: 'user_owned' },
+        }],
+      }
+      const m = generate(sessionConfig)
+      const result = match('show my data', m)
+      expect(result.extractedParams.user_id).toBe('[from_session]')
+    })
+  })
+
+  describe('intent classification', () => {
+    it('classifies api resolver as retrieval', () => {
+      const result = match('Get latest articles', manifest)
+      expect(result.intent).toBe('retrieval')
+    })
+
+    it('classifies nav resolver as navigation', () => {
+      const result = match('Open settings', manifest)
+      expect(result.intent).toBe('navigation')
+    })
+  })
+
+})

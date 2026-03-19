@@ -18,7 +18,8 @@
     "dev": "tsc --watch",
     "example": "tsx examples/basic.ts",
     "validate": "node bin/capman.js validate",
-    "inspect": "node bin/capman.js inspect"
+    "inspect": "node bin/capman.js inspect",
+    "test": "vitest run"
   },
   "keywords": [
     "ai",
@@ -32,7 +33,8 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.0"
   },
   "dependencies": {
     "dotenv": "^17.3.1",
