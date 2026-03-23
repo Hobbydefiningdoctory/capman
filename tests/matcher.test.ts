@@ -129,4 +129,43 @@ describe('match()', () => {
     })
   })
 
+  describe('ask() matching modes', () => {
+    it('cheap mode — uses keyword only, never LLM', async () => {
+      const { ask } = await import('../src/index')
+      const result = await ask('Show me articles', manifest, {
+        mode: 'cheap',
+        dryRun: true,
+      })
+      expect(result.match.capability?.id).toBe('get_articles')
+      expect(result.match.confidence).toBeGreaterThanOrEqual(50)
+    })
+
+    it('balanced mode — uses keyword when confident', async () => {
+      const { ask } = await import('../src/index')
+      const result = await ask('Show me articles', manifest, {
+        mode: 'balanced',
+        dryRun: true,
+      })
+      expect(result.match.capability?.id).toBe('get_articles')
+    })
+
+    it('accurate mode — warns and falls back when no llm provided', async () => {
+      const { ask } = await import('../src/index')
+      const result = await ask('Show me articles', manifest, {
+        mode: 'accurate',
+        dryRun: true,
+        // no llm provided — should fallback to keyword
+      })
+      expect(result.match.capability?.id).toBe('get_articles')
+    })
+
+    it('defaults to balanced mode when no mode specified', async () => {
+      const { ask } = await import('../src/index')
+      const result = await ask('Show me articles', manifest, {
+        dryRun: true,
+      })
+      expect(result.match.capability?.id).toBe('get_articles')
+    })
+  })
+  
 })

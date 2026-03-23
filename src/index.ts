@@ -1,5 +1,6 @@
 export { setLogLevel } from './logger'
 export type { LogLevel } from './logger'
+import { logger } from './logger'
 
 export type {
   Capability,
@@ -44,8 +45,20 @@ import type { Manifest, MatchResult, ResolveResult } from './types'
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions } from './resolver'
 
+export type MatchMode = 'cheap' | 'balanced' | 'accurate'
+
 export interface AskOptions extends ResolveOptions {
   llm?: LLMMatcherOptions['llm']
+  /**
+   * Controls how intent matching is performed.
+   *
+   * - 'cheap'    — keyword matching only. No LLM calls. Free but less accurate.
+   * - 'balanced' — keyword first. Falls back to LLM if confidence < 50%. (default)
+   * - 'accurate' — LLM first. Falls back to keyword if LLM call fails.
+   *
+   * @default 'balanced'
+   */
+  mode?: MatchMode
 }
 
 export interface AskResult {
@@ -61,21 +74,45 @@ export interface AskResult {
  *   baseUrl: 'https://api.your-app.com',
  * })
  */
+
 export async function ask(
   query: string,
   manifest: Manifest,
   options: AskOptions = {}
 ): Promise<AskResult> {
-  const { llm, ...resolveOptions } = options
+  const { llm, mode = 'balanced', ...resolveOptions } = options
 
-  // Tier 1 — try keyword matcher first (fast, no API call)
-  const keywordResult = _match(query, manifest)
+  let matchResult: MatchResult
 
-  // If confident enough, use it directly
-  const THRESHOLD = 50
-  const matchResult = (keywordResult.confidence >= THRESHOLD || !llm)
-    ? keywordResult
-    : await _matchWithLLM(query, manifest, { llm })
+  switch (mode) {
+    case 'cheap': {
+      // Keyword only — never calls LLM
+      matchResult = _match(query, manifest)
+      break
+    }
+
+    case 'accurate': {
+      // LLM first — falls back to keyword if LLM fails or no llm provided
+      if (llm) {
+        matchResult = await _matchWithLLM(query, manifest, { llm })
+      } else {
+        logger.warn('ask() mode is "accurate" but no llm function was provided — falling back to keyword matching')
+        matchResult = _match(query, manifest)
+      }
+      break
+    }
+
+    case 'balanced':
+    default: {
+      // Keyword first — LLM fallback if confidence below threshold
+      const keywordResult = _match(query, manifest)
+      const THRESHOLD = 50
+      matchResult = (keywordResult.confidence >= THRESHOLD || !llm)
+        ? keywordResult
+        : await _matchWithLLM(query, manifest, { llm })
+      break
+    }
+  }
 
   const resolution = await _resolve(
     matchResult,
