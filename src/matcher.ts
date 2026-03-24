@@ -126,9 +126,11 @@ function extractParams(query: string, cap: Capability): Record<string, string | 
 
         if (tokens.length > 0) {
           // For IDs and numbers — single token is correct
-          const isIdParam = param.name.includes('id') ||
-            param.description.toLowerCase().includes('id') ||
-            param.description.toLowerCase().includes('number')
+          const isIdParam = param.name === 'id' ||
+            param.name.endsWith('_id') ||
+            param.name.endsWith('Id') ||
+            /^\s*\w+\s+id\b/i.test(param.description) ||
+            /^id\b/i.test(param.description)
 
           // For names, products, destinations — grab multi-word phrase
           extracted = (isIdParam || isNavParam) ? tokens[0] : tokens.join('-').toLowerCase()

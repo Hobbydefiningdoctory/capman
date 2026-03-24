@@ -43,13 +43,20 @@ function requireSrc() {
   const distPath = path.join(__dirname, '..', 'dist', 'cjs', 'index.js')
   if (fs.existsSync(distPath)) return require(distPath)
 
+  // dist not built — try to build automatically
+  log.info('dist/cjs not found — running build...')
   try {
-    require('ts-node/register')
-    return require(path.join(__dirname, '..', 'src', 'index.ts'))
+    require('child_process').execSync('npm run build', {
+      cwd: path.join(__dirname, '..'),
+      stdio: 'inherit'
+    })
+    if (fs.existsSync(distPath)) return require(distPath)
   } catch {
-    log.error('Cannot find dist/cjs/. Run: pnpm run build')
-    process.exit(1)
+    // build failed
   }
+
+  log.error('Cannot find dist/cjs/. Run: pnpm run build')
+  process.exit(1)
 }
 
 function cmdHelp() {
@@ -229,10 +236,11 @@ function cmdDemo() {
         name: 'Navigate to screen',
         description: 'Route the user to a specific page in the store.',
         examples: [
-          'Take me to my cart',
-          'Open checkout',
-          'Go to my account',
-          'Show me the homepage',
+          'Take me to cart',
+          'Open cart',
+          'Go to checkout',
+          'Navigate to account',
+          'Show homepage',
         ],
         params: [
           { name: 'destination', description: 'Target screen', required: true, source: 'user_query' }
@@ -249,7 +257,7 @@ function cmdDemo() {
   const queries = [
     'Check availability for blue jacket',
     'Track order 1234',
-    'Take me to my cart',
+    'Go to cart',
     'Is the website down?',
   ]
 
