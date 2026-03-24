@@ -48,6 +48,18 @@ import type { ResolveOptions } from './resolver'
 
 export type MatchMode = 'cheap' | 'balanced' | 'accurate'
 
+// ─── Engine (recommended API) ─────────────────────────────────────────────────
+export { CapmanEngine } from './engine'
+export type { EngineOptions, EngineResult } from './engine'
+
+// ─── Cache ────────────────────────────────────────────────────────────────────
+export { MemoryCache, FileCache, ComboCache } from './cache'
+export type { CacheStore, CacheEntry } from './cache'
+
+// ─── Learning ─────────────────────────────────────────────────────────────────
+export { FileLearningStore, MemoryLearningStore } from './learning'
+export type { LearningStore, LearningEntry, KeywordStats } from './learning'
+
 export interface AskOptions extends ResolveOptions {
   llm?: LLMMatcherOptions['llm']
   /**

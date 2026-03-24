@@ -27,7 +27,7 @@
     "CONTRIBUTING.md"
   ],
   "scripts": {
-    "prebuild":   "node scripts/version.js",
+    "prebuild":   "node src/scripts/version.js",
     "build:cjs":  "tsc --project tsconfig.json",
     "build:esm":  "tsc --project tsconfig.esm.json",
     "build":      "pnpm run build:cjs && pnpm run build:esm",
