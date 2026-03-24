@@ -62,6 +62,7 @@ export type { LearningStore, LearningEntry, KeywordStats } from './learning'
 
 export interface AskOptions extends ResolveOptions {
   llm?: LLMMatcherOptions['llm']
+  
   /**
    * Controls how intent matching is performed.
    *
@@ -71,6 +72,7 @@ export interface AskOptions extends ResolveOptions {
    *
    * @default 'balanced'
    */
+  
   mode?: MatchMode
 }
 
