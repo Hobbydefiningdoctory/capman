@@ -39,6 +39,53 @@ export interface LearningStore {
   clear(): Promise<void>
 }
 
+// ─── Shared computation helpers ───────────────────────────────────────────────
+
+function computeStats(entries: LearningEntry[]): KeywordStats {
+  const index: Record<string, Record<string, number>> = {}
+  let totalQueries = 0
+  let llmQueries   = 0
+  let cacheHits    = 0
+  let outOfScope   = 0
+
+  for (const entry of entries) {
+    totalQueries++
+    if (entry.resolvedVia === 'llm')   llmQueries++
+    if (entry.resolvedVia === 'cache') cacheHits++
+    if (!entry.capabilityId)           outOfScope++
+
+    if (entry.capabilityId) {
+      const words = entry.query.toLowerCase()
+        .split(/\W+/)
+        .filter(w => w.length > 2)
+
+      for (const word of words) {
+        if (!index[word]) index[word] = {}
+        index[word][entry.capabilityId] =
+          (index[word][entry.capabilityId] ?? 0) + 1
+      }
+    }
+  }
+
+  return { index, totalQueries, llmQueries, cacheHits, outOfScope }
+}
+
+function computeTopCapabilities(
+  entries: LearningEntry[],
+  limit: number
+): Array<{ id: string; hits: number }> {
+  const counts: Record<string, number> = {}
+  for (const entry of entries) {
+    if (entry.capabilityId) {
+      counts[entry.capabilityId] = (counts[entry.capabilityId] ?? 0) + 1
+    }
+  }
+  return Object.entries(counts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([id, hits]) => ({ id, hits }))
+}
+
 // ─── File Learning Store ──────────────────────────────────────────────────────
 
 export class FileLearningStore implements LearningStore {
@@ -48,93 +95,58 @@ export class FileLearningStore implements LearningStore {
 
   constructor(filePath = '.capman/learning.json') {
     this.filePath = path.resolve(process.cwd(), filePath)
+    logger.info(`FileLearningStore initialized — writing to: ${this.filePath}`)
   }
 
-  private load(): void {
+  private async load(): Promise<void> {
     if (this.loaded) return
     try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'))
-        this.entries = raw.entries ?? []
-        logger.debug(`Learning store loaded: ${this.entries.length} entries`)
-      }
+      const raw = await fs.promises.readFile(this.filePath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      this.entries = parsed.entries ?? []
+      logger.debug(`Learning store loaded: ${this.entries.length} entries`)
     } catch {
-      logger.warn(`Failed to load learning store at ${this.filePath}`)
+      // File doesn't exist yet — start fresh
     }
     this.loaded = true
   }
 
-  private save(): void {
+  private async save(): Promise<void> {
     try {
       const dir = path.dirname(this.filePath)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(this.filePath, JSON.stringify({
-        entries: this.entries,
-        updatedAt: new Date().toISOString(),
-      }, null, 2))
+      await fs.promises.mkdir(dir, { recursive: true })
+      await fs.promises.writeFile(
+        this.filePath,
+        JSON.stringify({
+          entries: this.entries,
+          updatedAt: new Date().toISOString(),
+        }, null, 2)
+      )
     } catch {
       logger.warn(`Failed to save learning store to ${this.filePath}`)
     }
   }
 
   async record(entry: LearningEntry): Promise<void> {
-    this.load()
+    await this.load()
     this.entries.push(entry)
-    this.save()
+    await this.save()
     logger.debug(`Learning recorded: "${entry.query}" → ${entry.capabilityId ?? 'OUT_OF_SCOPE'} via ${entry.resolvedVia}`)
   }
 
   async getStats(): Promise<KeywordStats> {
-    this.load()
-
-    const index: Record<string, Record<string, number>> = {}
-    let totalQueries = 0
-    let llmQueries   = 0
-    let cacheHits    = 0
-    let outOfScope   = 0
-
-    for (const entry of this.entries) {
-      totalQueries++
-      if (entry.resolvedVia === 'llm')   llmQueries++
-      if (entry.resolvedVia === 'cache') cacheHits++
-      if (!entry.capabilityId)           outOfScope++
-
-      if (entry.capabilityId) {
-        // Index each word of the query against the matched capability
-        const words = entry.query.toLowerCase()
-          .split(/\W+/)
-          .filter(w => w.length > 2)
-
-        for (const word of words) {
-          if (!index[word]) index[word] = {}
-          index[word][entry.capabilityId] =
-            (index[word][entry.capabilityId] ?? 0) + 1
-        }
-      }
-    }
-
-    return { index, totalQueries, llmQueries, cacheHits, outOfScope }
+    await this.load()
+    return computeStats(this.entries)
   }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
-    this.load()
-    const counts: Record<string, number> = {}
-
-    for (const entry of this.entries) {
-      if (entry.capabilityId) {
-        counts[entry.capabilityId] = (counts[entry.capabilityId] ?? 0) + 1
-      }
-    }
-
-    return Object.entries(counts)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, limit)
-      .map(([id, hits]) => ({ id, hits }))
+    await this.load()
+    return computeTopCapabilities(this.entries, limit)
   }
 
   async clear(): Promise<void> {
     this.entries = []
-    this.save()
+    await this.save()
   }
 }
 
@@ -148,45 +160,11 @@ export class MemoryLearningStore implements LearningStore {
   }
 
   async getStats(): Promise<KeywordStats> {
-    const index: Record<string, Record<string, number>> = {}
-    let totalQueries = 0
-    let llmQueries   = 0
-    let cacheHits    = 0
-    let outOfScope   = 0
-
-    for (const entry of this.entries) {
-      totalQueries++
-      if (entry.resolvedVia === 'llm')   llmQueries++
-      if (entry.resolvedVia === 'cache') cacheHits++
-      if (!entry.capabilityId)           outOfScope++
-
-      if (entry.capabilityId) {
-        const words = entry.query.toLowerCase()
-          .split(/\W+/)
-          .filter(w => w.length > 2)
-
-        for (const word of words) {
-          if (!index[word]) index[word] = {}
-          index[word][entry.capabilityId] =
-            (index[word][entry.capabilityId] ?? 0) + 1
-        }
-      }
-    }
-
-    return { index, totalQueries, llmQueries, cacheHits, outOfScope }
+    return computeStats(this.entries)
   }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
-    const counts: Record<string, number> = {}
-    for (const entry of this.entries) {
-      if (entry.capabilityId) {
-        counts[entry.capabilityId] = (counts[entry.capabilityId] ?? 0) + 1
-      }
-    }
-    return Object.entries(counts)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, limit)
-      .map(([id, hits]) => ({ id, hits }))
+    return computeTopCapabilities(this.entries, limit)
   }
 
   async clear(): Promise<void> {

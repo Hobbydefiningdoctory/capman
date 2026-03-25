@@ -1,0 +1,39 @@
+{
+  "show me articles": {
+    "query": "Show me articles",
+    "result": {
+      "capability": {
+        "id": "get_articles",
+        "name": "Get articles",
+        "description": "Fetch a list of articles from the platform.",
+        "examples": [
+          "Show me articles",
+          "List all posts",
+          "Get latest articles"
+        ],
+        "params": [],
+        "returns": [
+          "articles"
+        ],
+        "resolver": {
+          "type": "api",
+          "endpoints": [
+            {
+              "method": "GET",
+              "path": "/articles"
+            }
+          ]
+        },
+        "privacy": {
+          "level": "public"
+        }
+      },
+      "confidence": 100,
+      "intent": "retrieval",
+      "extractedParams": {},
+      "reasoning": "test"
+    },
+    "cachedAt": "2026-03-25T21:11:26.876Z",
+    "hits": 0
+  }
+}

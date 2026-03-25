@@ -72,35 +72,36 @@ export class FileCache implements CacheStore {
 
   constructor(filePath = '.capman/cache.json') {
     this.filePath = path.resolve(process.cwd(), filePath)
+    logger.info(`FileCache initialized — writing to: ${this.filePath}`)
   }
 
-  private load(): void {
+  private async load(): Promise<void> {
     if (this.loaded) return
     try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'))
-        this.store = new Map(Object.entries(raw))
-        logger.debug(`File cache loaded: ${this.store.size} entries`)
-      }
+      const raw = await fs.promises.readFile(this.filePath, 'utf-8')
+      this.store = new Map(Object.entries(JSON.parse(raw)))
+      logger.debug(`File cache loaded: ${this.store.size} entries`)
     } catch {
-      logger.warn(`Failed to load file cache at ${this.filePath}`)
+      // File doesn't exist yet — start fresh
     }
     this.loaded = true
   }
 
-  private save(): void {
+  private async save(): Promise<void> {
     try {
       const dir = path.dirname(this.filePath)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      const obj = Object.fromEntries(this.store)
-      fs.writeFileSync(this.filePath, JSON.stringify(obj, null, 2))
+      await fs.promises.mkdir(dir, { recursive: true })
+      await fs.promises.writeFile(
+        this.filePath,
+        JSON.stringify(Object.fromEntries(this.store), null, 2)
+      )
     } catch {
       logger.warn(`Failed to save file cache to ${this.filePath}`)
     }
   }
 
   async get(query: string): Promise<CacheEntry | null> {
-    this.load()
+    await this.load()
     const key = normalizeQuery(query)
     const entry = this.store.get(key)
     if (entry) {
@@ -112,7 +113,7 @@ export class FileCache implements CacheStore {
   }
 
   async set(query: string, result: MatchResult): Promise<void> {
-    this.load()
+    await this.load()
     const key = normalizeQuery(query)
     this.store.set(key, {
       query,
@@ -120,17 +121,17 @@ export class FileCache implements CacheStore {
       cachedAt: new Date().toISOString(),
       hits: 0,
     })
-    this.save()
+    await this.save()
     logger.debug(`Cache set (file): "${query}"`)
   }
 
   async clear(): Promise<void> {
     this.store.clear()
-    this.save()
+    await this.save()
   }
 
   async size(): Promise<number> {
-    this.load()
+    await this.load()
     return this.store.size
   }
 }
@@ -156,6 +157,7 @@ export class ComboCache implements CacheStore {
     if (fileHit) {
       // Promote to memory for next time
       await this.memory.set(query, fileHit.result)
+      logger.debug(`Cache promoted to memory: "${query}"`)
       return fileHit
     }
 

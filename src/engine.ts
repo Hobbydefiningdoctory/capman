@@ -5,8 +5,8 @@ import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry } from './learning'
 import { match as _match, matchWithLLM as _matchWithLLM } from './matcher'
 import { resolve as _resolve } from './resolver'
-import { ComboCache } from './cache'
-import { FileLearningStore } from './learning'
+import { MemoryCache } from './cache'
+import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
 import type { MatchMode } from './index'
 
@@ -71,15 +71,17 @@ export class CapmanEngine {
     this.headers   = options.headers
     this.threshold = options.threshold ?? 50
 
-    // Cache — default ComboCache, or disabled with false
+    // Cache — default MemoryCache (no filesystem writes), or disabled with false
+    // Use FileCache or ComboCache explicitly for persistence across restarts
     this.cache = options.cache === false
       ? null
-      : (options.cache ?? new ComboCache())
+      : (options.cache ?? new MemoryCache())
 
-    // Learning — default FileLearningStore, or disabled with false
+    // Learning — default MemoryLearningStore (no filesystem writes), or disabled with false
+    // Use FileLearningStore explicitly for persistence across restarts
     this.learning = options.learning === false
       ? null
-      : (options.learning ?? new FileLearningStore())
+      : (options.learning ?? new MemoryLearningStore())
 
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
   }

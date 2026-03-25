@@ -101,6 +101,29 @@ describe('CapmanEngine', () => {
       await engine.clearCache()
       expect(await cache.size()).toBe(0)
     })
+
+    it('ComboCache promotes file hit to memory', async () => {
+      const { ComboCache } = await import('../src/cache')
+      const combo = new ComboCache()
+
+      // Manually set in file cache
+      await combo['file'].set('Show me articles', {
+        capability: manifest.capabilities[0],
+        confidence: 100,
+        intent: 'retrieval' as const,
+        extractedParams: {},
+        reasoning: 'test',
+      })
+
+      // First get — comes from file, promotes to memory
+      const hit1 = await combo.get('Show me articles')
+      expect(hit1).not.toBeNull()
+      expect(hit1?.result.capability?.id).toBe('get_articles')
+
+      // Second get — comes from memory (promoted)
+      const memHit = await combo['memory'].get('Show me articles')
+      expect(memHit).not.toBeNull()
+    })
   })
 
   describe('learning', () => {
