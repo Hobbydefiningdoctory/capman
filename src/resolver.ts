@@ -98,20 +98,19 @@ export async function resolve(
   logger.debug(`Options: baseUrl=${options.baseUrl} dryRun=${options.dryRun}`)
 
   try {
-        switch (resolver.type) {
-          case 'api':
-            return await resolveApi(resolver, enrichedParams, options)
+    switch (resolver.type) {
+      case 'api':
+        return await resolveApi(resolver, enrichedParams, options)
 
-          case 'nav':
-            return resolveNav(resolver, enrichedParams)
+      case 'nav':
+        return resolveNav(resolver, enrichedParams)
 
-          case 'hybrid': {
-            logger.debug('Hybrid resolver — running API and nav in parallel')
-            const [apiResult, navResult] = await Promise.all([
-              resolveApi(resolver.api as ApiResolver, enrichedParams, options),
-              Promise.resolve(resolveNav(resolver.nav as NavResolver, enrichedParams)),
-            ])
-            
+      case 'hybrid': {
+        logger.debug('Hybrid resolver — running API and nav in parallel')
+        const [apiResult, navResult] = await Promise.all([
+          resolveApi(resolver.api as ApiResolver, enrichedParams, options),
+          Promise.resolve(resolveNav(resolver.nav as NavResolver, enrichedParams)),
+        ])
         return {
           success: apiResult.success && navResult.success,
           resolverType: 'hybrid',

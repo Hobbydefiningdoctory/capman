@@ -265,7 +265,13 @@ Respond ONLY in valid JSON (no markdown):
       intent: isOOS ? 'out_of_scope' : parsed.intent,
       extractedParams: parsed.extracted_params ?? {},
       reasoning: parsed.reasoning,
+      candidates: capability ? [{
+        capabilityId: capability.id,
+        score: parsed.confidence,
+        matched: true,
+      }] : [],
     }
+    
   } catch (err) {
     logger.warn(`LLM match failed, falling back to keyword matcher: ${err}`)
     return match(query, manifest)

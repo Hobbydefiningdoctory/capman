@@ -24,9 +24,9 @@ export interface EngineOptions {
   mode?: MatchMode
   /** LLM function for accurate/balanced matching */
   llm?: LLMMatcherOptions['llm']
-  /** Cache store — defaults to ComboCache (memory + file) */
+  /** Cache store — defaults to MemoryCache. Use FileCache or ComboCache for persistence. */
   cache?: CacheStore | false
-  /** Learning store — defaults to FileLearningStore */
+  /** Learning store — defaults to MemoryLearningStore. Use FileLearningStore for persistence. */
   learning?: LearningStore | false
   /** Base URL for API resolvers */
   baseUrl?: string
