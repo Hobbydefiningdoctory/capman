@@ -83,8 +83,8 @@ export interface MatchResult {
   intent: 'navigation' | 'retrieval' | 'hybrid' | 'out_of_scope'
   extractedParams: Record<string, string | null>
   reasoning: string
-  /** All scored candidates — used for trace */
-  candidates?: MatchCandidate[]
+  /** All scored candidates — always present after match() */
+  candidates: MatchCandidate[]
 }
 
 // ─── Resolve Result ───────────────────────────────────────────────────────────

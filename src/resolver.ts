@@ -85,7 +85,7 @@ export async function resolve(
   const enrichedParams = { ...params }
   if (options.auth?.userId) {
     for (const param of capability.params) {
-      if (param.source === 'session' && options.auth.userId) {
+      if (param.source === 'session') {
         enrichedParams[param.name] = options.auth.userId
         logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
       }
@@ -159,35 +159,39 @@ async function resolveApi(
     }
   }
 
-  // ── Fetch with retry + timeout ────────────────────────────────────────────
-  async function fetchWithRetry(call: ApiCallResult, attempt: number): Promise<Response> {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeoutMs)
-
-    try {
-      const res = await fetchFn(call.url, {
-        method: call.method,
-        headers: options.headers ?? {},
-        signal: controller.signal,
-        body: ['POST', 'PUT', 'PATCH'].includes(call.method)
-          ? JSON.stringify(call.params)
-          : undefined,
-      })
-      clearTimeout(timer)
-      return res
-    } catch (err) {
-      clearTimeout(timer)
-      const isTimeout = err instanceof Error && err.name === 'AbortError'
-      if (attempt < retries) {
-        logger.warn(`Request failed (attempt ${attempt + 1}/${retries + 1}) — retrying: ${isTimeout ? 'timeout' : err}`)
-        return fetchWithRetry(call, attempt + 1)
+  // ── Fetch with retry + timeout (iterative — no recursion) ────────────────
+  async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), timeoutMs)
+      try {
+        const res = await fetchFn(call.url, {
+          method: call.method,
+          headers: options.headers ?? {},
+          signal: controller.signal,
+          body: ['POST', 'PUT', 'PATCH'].includes(call.method)
+            ? JSON.stringify(call.params)
+            : undefined,
+        })
+        clearTimeout(timer)
+        return res
+      } catch (err) {
+        clearTimeout(timer)
+        lastErr = err
+        const isTimeout = err instanceof Error && err.name === 'AbortError'
+        if (attempt < retries) {
+          logger.warn(`Request failed (attempt ${attempt + 1}/${retries + 1}) — retrying: ${isTimeout ? 'timeout' : err}`)
+        } else {
+          throw isTimeout ? new Error(`Request timed out after ${timeoutMs}ms`) : err
+        }
       }
-      throw isTimeout ? new Error(`Request timed out after ${timeoutMs}ms`) : err
     }
+    throw lastErr
   }
 
   try {
-    const responses = await Promise.all(apiCalls.map(c => fetchWithRetry(c, 0)))
+    const responses = await Promise.all(apiCalls.map(c => fetchWithRetry(c)))
 
     const failedIdx = responses.findIndex(r => !r.ok)
     if (failedIdx !== -1) {

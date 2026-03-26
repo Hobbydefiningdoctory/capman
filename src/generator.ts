@@ -10,7 +10,7 @@ export function generate(config: CapmanConfig): Manifest {
     version: VERSION,
     app: config.app,
     generatedAt: new Date().toISOString(),
-    capabilities: config.capabilities,
+    capabilities: config.capabilities.map(cap => ({ ...cap, params: [...cap.params] })),
   }
 }
 

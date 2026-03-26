@@ -139,8 +139,8 @@ function extractParams(query: string, cap: Capability): Record<string, string | 
       }
     }
 
-    // Fallback — grab last meaningful word in the query
-    if (!extracted) {
+    // Fallback — only for required params; optional params stay null if no keyword matched
+    if (!extracted && param.required) {
       const words = query.trim().split(/\s+/)
       const meaningful = words.filter(w => !STOPWORDS.has(w.toLowerCase()))
       extracted = meaningful[meaningful.length - 1] ?? null
@@ -161,6 +161,7 @@ export function match(query: string, manifest: Manifest): MatchResult {
       intent: 'out_of_scope',
       extractedParams: {},
       reasoning: 'Empty query',
+      candidates: [],
     }
   }
 

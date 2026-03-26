@@ -29,6 +29,8 @@ function normalizeQuery(query: string): string {
 
 // ─── Memory Cache ─────────────────────────────────────────────────────────────
 
+const MEMORY_CACHE_MAX = 512
+
 export class MemoryCache implements CacheStore {
   private store = new Map<string, CacheEntry>()
 
@@ -45,6 +47,12 @@ export class MemoryCache implements CacheStore {
 
   async set(query: string, result: MatchResult): Promise<void> {
     const key = normalizeQuery(query)
+    if (this.store.size >= MEMORY_CACHE_MAX) {
+      // Evict the oldest entry (Maps maintain insertion order)
+      const oldest = this.store.keys().next().value
+      if (oldest !== undefined) this.store.delete(oldest)
+      logger.debug(`Cache evicted oldest entry (max size ${MEMORY_CACHE_MAX} reached)`)
+    }
     this.store.set(key, {
       query,
       result,
