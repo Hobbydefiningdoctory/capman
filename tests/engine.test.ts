@@ -220,4 +220,73 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('execution trace', () => {
+    it('trace contains candidates with scores', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.trace).toBeDefined()
+      expect(result.trace.candidates.length).toBeGreaterThan(0)
+      expect(result.trace.candidates.some(c => c.matched)).toBe(true)
+    })
+
+    it('trace contains reasoning array', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.trace.reasoning.length).toBeGreaterThan(0)
+      expect(result.trace.reasoning[0]).toContain('get_articles')
+    })
+
+    it('trace contains steps', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.trace.steps.length).toBeGreaterThan(0)
+      expect(result.trace.steps.some(s => s.type === 'keyword_match')).toBe(true)
+    })
+
+    it('trace shows cache hit when served from cache', async () => {
+      const cache = new MemoryCache()
+      const engine = new CapmanEngine({
+        manifest,
+        cache,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      await engine.ask('Show me articles', { dryRun: true })
+      const r2 = await engine.ask('Show me articles', { dryRun: true })
+      expect(r2.trace.resolvedVia).toBe('cache')
+      expect(r2.trace.steps.some(s => s.type === 'cache_check' && s.status === 'hit')).toBe(true)
+    })
+
+    it('trace totalMs is a positive number', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.trace.totalMs).toBeGreaterThanOrEqual(0)
+    })
+  })
+
 })

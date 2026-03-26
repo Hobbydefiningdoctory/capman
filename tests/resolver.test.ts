@@ -336,6 +336,43 @@ describe('resolve()', () => {
       expect(result.apiCalls?.[0].status).toBe(200)
       expect(result.apiCalls?.[0].data).toEqual({ id: '42', name: 'Test Resource' })
     })
+    
+    it('retries on failure and succeeds', async () => {
+      let attempts = 0
+      const matchResult = match('Find resource by ID', manifest)
+      const result = await resolve(
+        matchResult,
+        { resource_id: '42' },
+        {
+          baseUrl: 'https://api.test.com',
+          retries: 2,
+          fetch: async () => {
+            attempts++
+            if (attempts < 3) throw new Error('Network error')
+            return { ok: true, status: 200, statusText: 'OK',
+              text: async () => '{}' } as Response
+          },
+        }
+      )
+      expect(result.success).toBe(true)
+      expect(attempts).toBe(3)
+    })
+
+    it('fails after exhausting retries', async () => {
+      const matchResult = match('Find resource by ID', manifest)
+      const result = await resolve(
+        matchResult,
+        { resource_id: '42' },
+        {
+          baseUrl: 'https://api.test.com',
+          retries: 1,
+          fetch: async () => { throw new Error('Network error') },
+        }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('Network error')
+    })
   })
+  
 
 })

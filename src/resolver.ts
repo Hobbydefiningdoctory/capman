@@ -17,8 +17,11 @@ export interface ResolveOptions {
   fetch?: typeof globalThis.fetch
   dryRun?: boolean
   headers?: Record<string, string>
-  /** Auth context — required for user_owned and admin capabilities */
   auth?: AuthContext
+  /** Number of retries on failure (default: 0) */
+  retries?: number
+  /** Timeout in milliseconds (default: 5000) */
+  timeoutMs?: number
 }
 
 function checkPrivacy(
@@ -135,6 +138,8 @@ async function resolveApi(
   options: ResolveOptions
 ): Promise<ResolveResult> {
   const startTime = Date.now()
+  const retries   = options.retries  ?? 0
+  const timeoutMs = options.timeoutMs ?? 5000
 
   const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => ({
     method: endpoint.method,
@@ -143,80 +148,75 @@ async function resolveApi(
   }))
 
   if (options.dryRun) {
-    return {
-      success: true,
-      resolverType: 'api',
-      apiCalls,
-      durationMs: Date.now() - startTime,
-    }
+    return { success: true, resolverType: 'api', apiCalls, durationMs: Date.now() - startTime }
   }
 
   const fetchFn = options.fetch ?? globalThis.fetch
   if (!fetchFn) {
     return {
-      success: true,
-      resolverType: 'api',
-      apiCalls,
+      success: true, resolverType: 'api', apiCalls,
       durationMs: Date.now() - startTime,
       error: 'No fetch available — returning call plan only',
     }
   }
 
-  try {
-    const responses = await Promise.all(
-      apiCalls.map(c => fetchFn(c.url, {
-        method: c.method,
-        headers: options.headers ?? {},
-        body: ['POST', 'PUT', 'PATCH'].includes(c.method)
-          ? JSON.stringify(c.params)
-          : undefined,
-      }))
-    )
+  // ── Fetch with retry + timeout ────────────────────────────────────────────
+  async function fetchWithRetry(call: ApiCallResult, attempt: number): Promise<Response> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-    // Check for HTTP errors
+    try {
+      const res = await fetchFn(call.url, {
+        method: call.method,
+        headers: options.headers ?? {},
+        signal: controller.signal,
+        body: ['POST', 'PUT', 'PATCH'].includes(call.method)
+          ? JSON.stringify(call.params)
+          : undefined,
+      })
+      clearTimeout(timer)
+      return res
+    } catch (err) {
+      clearTimeout(timer)
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      if (attempt < retries) {
+        logger.warn(`Request failed (attempt ${attempt + 1}/${retries + 1}) — retrying: ${isTimeout ? 'timeout' : err}`)
+        return fetchWithRetry(call, attempt + 1)
+      }
+      throw isTimeout ? new Error(`Request timed out after ${timeoutMs}ms`) : err
+    }
+  }
+
+  try {
+    const responses = await Promise.all(apiCalls.map(c => fetchWithRetry(c, 0)))
+
     const failedIdx = responses.findIndex(r => !r.ok)
     if (failedIdx !== -1) {
       const failed = responses[failedIdx]
       return {
-        success: false,
-        resolverType: 'api',
-        apiCalls,
+        success: false, resolverType: 'api', apiCalls,
         durationMs: Date.now() - startTime,
         error: `API request failed: ${failed.status} ${failed.statusText}`,
       }
     }
 
-    // Parse response bodies
     const enrichedCalls = await Promise.all(
       responses.map(async (res, i) => {
         let data: unknown = undefined
         try {
           const text = await res.text()
           data = text ? JSON.parse(text) : undefined
-        } catch {
-          // Non-JSON response — leave data undefined
-        }
-        return {
-          ...apiCalls[i],
-          status: res.status,
-          data,
-        }
+        } catch { /* non-JSON response */ }
+        return { ...apiCalls[i], status: res.status, data }
       })
     )
 
     logger.debug(`API calls completed in ${Date.now() - startTime}ms`)
+    return { success: true, resolverType: 'api', apiCalls: enrichedCalls, durationMs: Date.now() - startTime }
 
-    return {
-      success: true,
-      resolverType: 'api',
-      apiCalls: enrichedCalls,
-      durationMs: Date.now() - startTime,
-    }
   } catch (err) {
     return {
-      success: false,
-      resolverType: 'api',
-      apiCalls,
+      success: false, resolverType: 'api', apiCalls,
       durationMs: Date.now() - startTime,
       error: err instanceof Error ? err.message : String(err),
     }
