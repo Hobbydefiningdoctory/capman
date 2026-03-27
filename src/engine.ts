@@ -196,7 +196,7 @@ export class CapmanEngine {
 
     // ── Step 4: Cache the match result ───────────────────────────────────────
     if (this.cache && matchResult.capability) {
-      const key = buildCacheKey(query, matchResult.capability.id, matchResult.extractedParams)
+      const key = buildCacheKey(query, null, {})
       await this.cache.set(key, matchResult)
     }
 
