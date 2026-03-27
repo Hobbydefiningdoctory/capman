@@ -8,7 +8,7 @@ import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
 import type { MatchMode } from './index'
-import { MemoryCache, buildCacheKey } from './cache'
+import { MemoryCache, buildCacheKey, normalizeQuery } from './cache'
 
 // ─── Engine Options ───────────────────────────────────────────────────────────
 
@@ -102,13 +102,13 @@ export class CapmanEngine {
     const steps: TraceStep[] = []
     let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
 
-    // ── Step 1: Check cache ──────────────────────────────────────────────────
-    const cacheStart = Date.now()
-    if (this.cache) {
-      const cacheKey = buildCacheKey(query, null, {})
-      const cached = await this.cache.get(cacheKey)
-      if (cached) {
-        steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
+        // ── Step 1: Check cache ──────────────────────────────────────────────────
+        const cacheStart = Date.now()
+        if (this.cache) {
+          const queryKey = normalizeQuery(query)
+          const cached = await this.cache.get(queryKey)
+          if (cached) {
+            steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
         logger.info(`Cache hit for: "${query}"`)
         const resolution = await _resolve(
           cached.result,
@@ -133,10 +133,10 @@ export class CapmanEngine {
         await this.recordLearning(query, cached.result, 'cache')
         return result
       }
-      steps.push({ type: 'cache_check', status: 'miss', durationMs: Date.now() - cacheStart })
-    } else {
-      steps.push({ type: 'cache_check', status: 'skip', durationMs: 0, detail: 'Cache disabled' })
-    }
+          steps.push({ type: 'cache_check', status: 'miss', durationMs: Date.now() - cacheStart })
+          } else {
+            steps.push({ type: 'cache_check', status: 'skip', durationMs: 0, detail: 'Cache disabled' })
+          }
 
     // ── Step 2: Match ────────────────────────────────────────────────────────
     let matchResult: MatchResult
@@ -195,11 +195,17 @@ export class CapmanEngine {
     }
 
     // ── Step 4: Cache the match result ───────────────────────────────────────
+    
     if (this.cache && matchResult.capability) {
-      const key = buildCacheKey(query, null, {})
-      await this.cache.set(key, matchResult)
+      const queryKey = normalizeQuery(query)
+      const capKey = buildCacheKey(query, matchResult.capability.id, matchResult.extractedParams)
+      // Store under both — query key for direct lookup, cap key for semantic dedup
+      await Promise.all([
+        this.cache.set(queryKey, matchResult),
+        capKey !== queryKey ? this.cache.set(capKey, matchResult) : Promise.resolve(),
+      ])
     }
-
+    
     // ── Step 5: Resolve ──────────────────────────────────────────────────────
     const resolveStart = Date.now()
     const resolution = await _resolve(

@@ -96,7 +96,7 @@ describe('CapmanEngine', () => {
       })
 
       await engine.ask('Show me articles', { dryRun: true })
-      expect(await cache.size()).toBe(1)
+      expect(await cache.size()).toBeGreaterThanOrEqual(1)
 
       await engine.clearCache()
       expect(await cache.size()).toBe(0)

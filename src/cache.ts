@@ -23,7 +23,7 @@ export interface CacheStore {
 
 // ─── Normalize query for cache key ────────────────────────────────────────────
 
-function normalizeQuery(query: string): string {
+export function normalizeQuery(query: string): string {
   return query.toLowerCase().trim().replace(/\s+/g, ' ')
 }
 
