@@ -102,13 +102,13 @@ export class CapmanEngine {
     const steps: TraceStep[] = []
     let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
 
-    // ── Step 1: Check cache ──────────────────────────────────────────────────
-    const cacheStart = Date.now()
-    if (this.cache) {
-      const queryKey = normalizeQuery(query)
-      const cached = await this.cache.get(queryKey)
-      if (cached) {
-        steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
+        // ── Step 1: Check cache ──────────────────────────────────────────────────
+        const cacheStart = Date.now()
+        if (this.cache) {
+          const queryKey = normalizeQuery(query)
+          const cached = await this.cache.get(queryKey)
+          if (cached) {
+            steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() -        cacheStart, detail: 'Served from cache' })
         logger.info(`Cache hit for: "${query}"`)
         const resolution = await _resolve(
           cached.result,
@@ -133,10 +133,10 @@ export class CapmanEngine {
         await this.recordLearning(query, cached.result, 'cache')
         return result
       }
-      steps.push({ type: 'cache_check', status: 'miss', durationMs: Date.now() - cacheStart })
-    } else {
-      steps.push({ type: 'cache_check', status: 'skip', durationMs: 0, detail: 'Cache disabled' })
-    }
+          steps.push({ type: 'cache_check', status: 'miss', durationMs: Date.now() - cacheStart })
+          } else {
+            steps.push({ type: 'cache_check', status: 'skip', durationMs: 0, detail: 'Cache disabled' })
+          }
 
     // ── Step 2: Match ────────────────────────────────────────────────────────
     let matchResult: MatchResult

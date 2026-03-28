@@ -4,13 +4,14 @@ All notable changes to capman are documented here.
 
 ---
 
-## [0.4.1] — upcoming
+## [0.4.1] — 2026-03-28
 ### Fixed
 - Prompt injection sanitization in `matchWithLLM` — query now passed as JSON field
 - `ask()` now delegates to `CapmanEngine` internally — eliminates logic duplication
 - `FileLearningStore` and `MemoryLearningStore` now cap at 10,000 entries with oldest-first pruning
 - Post-match cache key now uses `capabilityId + params` instead of raw query — higher hit rate
-
+- Removed duplicate `AskOptions` interface declaration in `index.ts`
+- Removed dead imports (`_match`, `_matchWithLLM`, `_resolve`) from `index.ts`
 ---
 
 ## [0.4.0] — 2026-03-xx

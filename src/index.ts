@@ -1,11 +1,5 @@
 export { setLogLevel } from './logger'
 export type { LogLevel } from './logger'
-import { CapmanEngine } from './engine'
-import { match as _match, matchWithLLM as _matchWithLLM } from './matcher'
-import { resolve as _resolve } from './resolver'
-import type { Manifest, MatchResult, ResolveResult } from './types'
-import type { LLMMatcherOptions } from './matcher'
-import type { ResolveOptions } from './resolver'
 
 export type {
   Capability,
@@ -46,39 +40,36 @@ export type { LLMMatcherOptions } from './matcher'
 export { resolve } from './resolver'
 export type { ResolveOptions, AuthContext } from './resolver'
 
-// ─── Convenience: ask() — match + resolve in one call ────────────────────────
-
-
-export type MatchMode = 'cheap' | 'balanced' | 'accurate'
-
 // ─── Engine (recommended API) ─────────────────────────────────────────────────
 export { CapmanEngine } from './engine'
 export type { EngineOptions, EngineResult } from './engine'
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
-export { MemoryCache, FileCache, ComboCache } from './cache'
+export { MemoryCache, FileCache, ComboCache, buildCacheKey, normalizeQuery } from './cache'
 export type { CacheStore, CacheEntry } from './cache'
 
 // ─── Learning ─────────────────────────────────────────────────────────────────
 export { FileLearningStore, MemoryLearningStore } from './learning'
 export type { LearningStore, LearningEntry, KeywordStats } from './learning'
 
+// ─── Convenience: ask() ───────────────────────────────────────────────────────
+
+import { CapmanEngine } from './engine'
+import type { Manifest, MatchResult, ResolveResult } from './types'
+import type { LLMMatcherOptions } from './matcher'
+import type { ResolveOptions } from './resolver'
+
+export type MatchMode = 'cheap' | 'balanced' | 'accurate'
+
 export interface AskOptions extends ResolveOptions {
   llm?: LLMMatcherOptions['llm']
   /**
    * Controls how intent matching is performed.
-   *
-   * - 'cheap'    — keyword matching only. No LLM calls. Free but less accurate.
-   * - 'balanced' — keyword first. Falls back to LLM if confidence < 50%. (default)
-   * - 'accurate' — LLM first. Falls back to keyword if LLM call fails.
-   *
+   * - 'cheap'    — keyword only, no LLM calls
+   * - 'balanced' — keyword first, LLM fallback if confidence < 50% (default)
+   * - 'accurate' — LLM first, keyword fallback
    * @default 'balanced'
    */
-  mode?: MatchMode
-}
-
-export interface AskOptions extends ResolveOptions {
-  llm?: LLMMatcherOptions['llm']
   mode?: MatchMode
 }
 
@@ -91,14 +82,13 @@ export interface AskResult {
  * One-shot convenience: match + resolve in a single call.
  * Delegates to CapmanEngine internally.
  *
+ * @deprecated For full features including trace and caching, use CapmanEngine directly.
+ *
  * @example
  * const result = await ask("show me the dashboard", manifest, {
  *   baseUrl: 'https://api.your-app.com',
  * })
- *
- * @deprecated For full features including trace and caching, use CapmanEngine directly.
  */
-
 export async function ask(
   query: string,
   manifest: Manifest,
