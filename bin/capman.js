@@ -267,7 +267,7 @@ function cmdDemo() {
   console.log(`${c.gray}  Capabilities: ${c.reset}${manifest.capabilities.length}`)
   console.log(`${c.gray}  Mode: keyword matcher (no LLM required)\n${c.reset}`)
 
-  let passed = 0
+let passed = 0
   let outOfScope = 0
 
   for (const query of queries) {
@@ -277,22 +277,21 @@ function cmdDemo() {
 
     if (result.capability) {
       passed++
-      const resolverColor = result.capability.resolver.type === 'api' ? c.teal :
-                            result.capability.resolver.type === 'nav' ? c.teal : c.yellow
+      const resolverColor = result.capability.resolver.type === 'nav' ? c.teal : c.teal
 
       console.log(`  ${c.green}✓${c.reset}  ${c.bold}"${query}"${c.reset}`)
       console.log(`     ${c.gray}→ matched:${c.reset}    ${resolverColor}${result.capability.id}${c.reset}`)
       console.log(`     ${c.gray}→ intent:${c.reset}     ${result.intent}`)
       console.log(`     ${c.gray}→ confidence:${c.reset} ${result.confidence}%`)
 
-      if (Object.keys(result.extractedParams).length > 0) {
-        const params = Object.entries(result.extractedParams)
-          .map(([k, v]) => `${k}=${v}`)
-          .join(', ')
+      // Show extracted params
+      const paramEntries = Object.entries(result.extractedParams).filter(([,v]) => v !== null)
+      if (paramEntries.length > 0) {
+        const params = paramEntries.map(([k, v]) => `${k}=${v}`).join(', ')
         console.log(`     ${c.gray}→ params:${c.reset}     ${params}`)
       }
 
-      // Show what API call would be made
+      // Show API call or nav target
       if (result.capability.resolver.type === 'api') {
         const endpoint = result.capability.resolver.endpoints[0]
         let path = endpoint.path
@@ -305,22 +304,51 @@ function cmdDemo() {
         for (const [k, v] of Object.entries(result.extractedParams)) {
           if (v) dest = dest.replace(`{${k}}`, v)
         }
-        console.log(`     ${c.gray}→ nav target:${c.reset}  ${dest}`)
+        console.log(`     ${c.gray}→ nav target:${c.reset} ${dest}`)
       }
 
-      console.log(`     ${c.gray}→ time:${c.reset}       ${duration}ms\n`)
+      // Show execution trace
+      console.log(`     ${c.gray}→ trace:${c.reset}`)
+      console.log(`       ${c.gray}steps:${c.reset}      keyword_match(pass, ${duration}ms)`)
+
+      // Show all candidates
+      const sorted = [...result.candidates]
+        .sort((a, b) => b.score - a.score)
+      const winner   = sorted[0]
+      const rejected = sorted.slice(1).filter(c2 => c2.score > 0)
+
+      console.log(`       ${c.gray}winner:${c.reset}     ${winner.capabilityId} (${winner.score}%)`)
+      if (rejected.length) {
+        const rejStr = rejected.map(r => `${r.capabilityId}(${r.score}%)`).join(', ')
+        console.log(`       ${c.gray}rejected:${c.reset}   ${rejStr}`)
+      }
+      console.log(`       ${c.gray}time:${c.reset}       ${duration}ms`)
+      console.log()
+
     } else {
       outOfScope++
       console.log(`  ${c.yellow}○${c.reset}  ${c.bold}"${query}"${c.reset}`)
-      console.log(`     ${c.gray}→ out of scope — no capability handles this\n${c.reset}`)
+      console.log(`     ${c.gray}→ out of scope — no capability matched${c.reset}`)
+      if (result.candidates.length) {
+        const best = result.candidates.sort((a, b) => b.score - a.score)[0]
+        console.log(`     ${c.gray}→ closest: ${best.capabilityId} (${best.score}%)${c.reset}`)
+      }
+      console.log()
     }
   }
 
   console.log(`${c.gray}  ─────────────────────────────────────────${c.reset}`)
-  console.log(`  ${c.green}${passed} matched${c.reset}  ${c.gray}·${c.reset}  ${c.yellow}${outOfScope} out of scope${c.reset}  ${c.gray}·${c.reset}  ${manifest.capabilities.length} capabilities\n`)
+  console.log(`  ${c.green}${passed} matched${c.reset}  ${c.gray}·${c.reset}  ${c.yellow}${outOfScope} out of scope${c.reset}  ${c.gray}·${c.reset}  ${manifest.capabilities.length} capabilities`)
+  console.log()
+  console.log(`  ${c.gray}What you just saw: every query is traced — matched capability,`)
+  console.log(`  confidence score, all rejected candidates, and execution time.${c.reset}`)
+  console.log(`  ${c.gray}No black box. You always know why.${c.reset}`)
+  console.log()
   console.log(`  ${c.gray}Try it on your own app:${c.reset}`)
-  console.log(`  ${c.teal}npx capman init${c.reset}  ${c.gray}→ create your manifest${c.reset}`)
-  console.log(`  ${c.teal}npx capman generate${c.reset}  ${c.gray}→ generate manifest.json${c.reset}\n`)
+  console.log(`  ${c.teal}npx capman init${c.reset}      ${c.gray}→ create your manifest${c.reset}`)
+  console.log(`  ${c.teal}npx capman generate${c.reset}  ${c.gray}→ generate manifest.json${c.reset}`)
+  console.log(`  ${c.teal}npx capman run "your query" --debug${c.reset}  ${c.gray}→ see the trace${c.reset}`)
+  console.log()
 }
 
 function cmdRun() {
