@@ -32,21 +32,21 @@ User query → match capability → resolve via API or nav → structured result
 
 ## Quick Start
 
-**1. Create your manifest config**
+**1. Generate your manifest — three ways:**
 
 ```bash
+# From an OpenAPI/Swagger spec (fastest, no API key needed)
+npx capman generate --from openapi.json
+npx capman generate --from https://api.your-app.com/openapi.json
+
+# AI-assisted — describe your app in plain English
+npx capman generate --ai
+
+# Manual — edit capman.config.js yourself
 npx capman init
 ```
 
-Edit `capman.config.js` to define your app's capabilities.
-
-**2. Generate the manifest**
-
-```bash
-npx capman generate
-```
-
-**3. Use the engine in your AI agent**
+**2. Use the engine in your AI agent**
 
 ```typescript
 import { CapmanEngine, readManifest } from 'capman'
@@ -66,10 +66,65 @@ console.log(result.resolvedVia)             // 'keyword' | 'llm' | 'cache'
 console.log(result.trace.reasoning)         // ['Matched "check_product_availability" with 100% confidence', ...]
 ```
 
-**4. See it live**
+**3. See it live**
 
 ```bash
 npx capman demo
+```
+
+---
+
+## Manifest Generation
+
+capman gives you three ways to create your manifest — pick based on what you have:
+
+### From OpenAPI / Swagger spec
+
+If your backend has an OpenAPI spec (most do), capman reads it and generates a complete manifest automatically. No LLM needed, no API key, works offline.
+
+```bash
+npx capman generate --from openapi.json
+npx capman generate --from https://api.your-app.com/openapi.json
+```
+
+What it does automatically:
+- Converts every endpoint into a capability with correct ID, name, and description
+- Extracts path params, query params, and request body fields
+- Infers privacy scope from security schemes — bearer token → `user_owned`, admin tags → `admin`, no auth → `public`
+- Generates natural language examples from the operation summary
+- Writes a ready `capman.config.js` for you to review and adjust
+
+```
+✓ Parsed 19 capabilities from spec
+✓ Config written to capman.config.js
+✓ Manifest written to manifest.json
+```
+
+### AI-assisted generation
+
+No OpenAPI spec? Describe your app in plain English and capman uses an LLM to generate a full manifest.
+
+```bash
+npx capman generate --ai
+```
+
+```
+Describe your app and its main capabilities:
+> A SaaS CRM. Users can create contacts, log calls, view pipeline
+  stages. Admins can manage teams and billing.
+
+Using anthropic to generate manifest...
+✓ 6 capabilities generated
+```
+
+Requires one of: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or `OPENROUTER_API_KEY` in your environment.
+
+### Manual
+
+For full control, start from a starter config and define capabilities yourself:
+
+```bash
+npx capman init
 ```
 
 ---
@@ -110,19 +165,6 @@ Debug any query from the CLI:
 
 ```bash
 npx capman run "check availability for blue jacket" --debug
-```
-
-```
-✓  Matched: check_product_availability
-   Intent:     retrieval
-   Confidence: 100%
-   Resolver:   api
-   Params:     product=blue-jacket
-
-── All candidates:
-   ✓  check_product_availability: 100%
-   ○  get_order_status: 12%
-   ○  navigate_to_screen: 0%
 ```
 
 ---
@@ -171,29 +213,15 @@ import { CapmanEngine, FileCache, FileLearningStore } from 'capman'
 
 const engine = new CapmanEngine({
   manifest,
-  // Default: MemoryCache (fast, resets on restart)
-  // For persistence across restarts:
   cache:    new FileCache('.capman/cache.json'),
   learning: new FileLearningStore('.capman/learning.json'),
 })
 
-// After real usage, see what's happening
 const stats = await engine.getStats()
-console.log(stats)
-// {
-//   totalQueries: 142,
-//   llmQueries:   18,
-//   cacheHits:    67,
-//   outOfScope:   3,
-//   index: { 'availability': { 'check_product_availability': 34 }, ... }
-// }
+// { totalQueries: 142, llmQueries: 18, cacheHits: 67, outOfScope: 3 }
 
 const top = await engine.getTopCapabilities(3)
-// [
-//   { id: 'check_product_availability', hits: 58 },
-//   { id: 'navigate_to_screen',         hits: 41 },
-//   { id: 'get_order_status',           hits: 28 },
-// ]
+// [{ id: 'check_product_availability', hits: 58 }, ...]
 ```
 
 ---
@@ -212,67 +240,17 @@ const engine = new CapmanEngine({
     userId: 'user-123',  // auto-injected into session params
   },
 })
-
-// user_owned capabilities require auth — blocked without it
-// admin capabilities require role: 'admin' — blocked for regular users
-// session params like {user_id} are auto-replaced from auth.userId
 ```
 
 ---
 
 ## Resolver Hardening
 
-Configure retries and timeouts per call:
-
 ```typescript
 const result = await engine.ask('show my orders', {
-  retries:   2,        // retry failed requests (default: 0)
-  timeoutMs: 3000,     // abort after 3 seconds (default: 5000)
+  retries:   2,
+  timeoutMs: 3000,
 })
-```
-
----
-
-## Capability Config
-
-Each capability in `capman.config.js`:
-
-```javascript
-module.exports = {
-  app: 'your-app',
-  baseUrl: 'https://api.your-app.com',
-  capabilities: [
-    {
-      id: 'check_product_availability',
-      name: 'Check product availability',
-      description: 'Check stock and pricing for a product by name or ID.',
-      examples: [
-        'Is the blue jacket available?',
-        'Check availability for product 42',
-        'Do you have size M in stock?',
-      ],
-      params: [
-        {
-          name: 'product',
-          description: 'Product name or ID',
-          required: true,
-          source: 'user_query',   // extracted from the query
-        },
-      ],
-      returns: ['stock', 'price', 'variants'],
-      resolver: {
-        type: 'api',              // 'api' | 'nav' | 'hybrid'
-        endpoints: [
-          { method: 'GET', path: '/products/{product}/availability' },
-        ],
-      },
-      privacy: {
-        level: 'public',          // 'public' | 'user_owned' | 'admin'
-        note: 'No auth required',
-      },
-    },
-  ],
-}
 ```
 
 ---
@@ -282,7 +260,9 @@ module.exports = {
 | Command | What it does |
 |---|---|
 | `capman init` | Create a starter `capman.config.js` |
-| `capman generate` | Generate `manifest.json` from config |
+| `capman generate` | Generate manifest from `capman.config.js` |
+| `capman generate --from <path\|url>` | Generate from OpenAPI/Swagger spec |
+| `capman generate --ai` | Generate manifest using AI |
 | `capman validate` | Validate your manifest for errors |
 | `capman inspect` | Print all capabilities in the manifest |
 | `capman run "query"` | Run a query against your manifest |
@@ -326,20 +306,19 @@ module.exports = {
 
 **Works well:**
 - Structured data retrieval via APIs
-- Navigating to known app screens
-- Multi-endpoint aggregation
+- Auto-generating manifests from OpenAPI specs
 - Privacy enforcement per capability
-- Caching repeated queries
 - Full execution tracing and debugging
+- Caching repeated queries
 
 **Current limits:**
 - Real-time infra status (is the server down?)
 - UI-only state with no API backing
 - Very ambiguous queries — use `mode: 'accurate'` with an LLM
-- Cross-app orchestration (planned)
+- Multi-instance deployments need Redis adapter (planned for v0.5)
 
 ---
 
 ## License
 
-MIT — [github.com/Hobbydefiningdoctory/capman](https://github.com/Hobbydefiningdoctory/capman)
+MIT — [github.com/Hobbydefiningdoctory/capman]

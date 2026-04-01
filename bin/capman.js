@@ -179,32 +179,25 @@ module.exports = ${JSON.stringify(config, null, 2)
       process.exit(1)
     }
 
-    // Detect LLM provider from env — Replit AI first (always available on Replit)
+    // Detect LLM provider from env
+    const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY
     const provider =
-      process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ? 'replit'     :
-      process.env.ANTHROPIC_API_KEY               ? 'anthropic'  :
-      process.env.OPENAI_API_KEY                  ? 'openai'     :
-      process.env.OPENROUTER_API_KEY              ? 'openrouter' : null
+      process.env.ANTHROPIC_API_KEY  ? 'anthropic' :
+      process.env.OPENAI_API_KEY     ? 'openai' :
+      process.env.OPENROUTER_API_KEY ? 'openrouter' : null
 
-    if (!provider) {
+    if (!apiKey || !provider) {
       log.error('No LLM API key found.')
-      console.log(`  Set one of: ${c.teal}AI_INTEGRATIONS_OPENAI_BASE_URL${c.reset} (Replit), ${c.teal}ANTHROPIC_API_KEY${c.reset}, ${c.teal}OPENAI_API_KEY${c.reset}, or ${c.teal}OPENROUTER_API_KEY${c.reset}`)
+      console.log(`  Set one of: ${c.teal}ANTHROPIC_API_KEY${c.reset}, ${c.teal}OPENAI_API_KEY${c.reset}, or ${c.teal}OPENROUTER_API_KEY${c.reset}`)
       process.exit(1)
     }
 
-    const providerLabel = {
-      replit:     'Replit AI (gpt-4o-mini)',
-      anthropic:  'Anthropic (claude-sonnet)',
-      openai:     'OpenAI (gpt-4o-mini)',
-      openrouter: 'OpenRouter (meta-llama/llama-3.3-70b-instruct:free)',
-    }[provider]
-
-    log.info(`Using ${providerLabel} to generate manifest...`)
+    log.info(`Using ${provider} to generate manifest...`)
 
     const prompt = buildAIPrompt(description)
     let raw
     try {
-      raw = await callLLM(provider, null, prompt)
+      raw = await callLLM(provider, apiKey, prompt)
     } catch (e) {
       log.error(`LLM call failed: ${e.message}`)
       process.exit(1)
@@ -334,32 +327,17 @@ Rules:
 
 // ─── LLM caller ───────────────────────────────────────────────────────────────
 
-async function callLLM(provider, _apiKey, prompt) {
-  if (provider === 'replit') {
-    const baseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
-    const apiKey  = process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-    if (!baseUrl || !apiKey) throw new Error('Replit AI env vars not set (AI_INTEGRATIONS_OPENAI_BASE_URL / AI_INTEGRATIONS_OPENAI_API_KEY)')
-    const res = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }],
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error?.message ?? res.statusText)
-    return data.choices[0].message.content
-  }
-
+async function callLLM(provider, apiKey, prompt) {
   if (provider === 'anthropic') {
-    const apiKey = process.env.ANTHROPIC_API_KEY
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -370,10 +348,12 @@ async function callLLM(provider, _apiKey, prompt) {
   }
 
   if (provider === 'openai') {
-    const apiKey = process.env.OPENAI_API_KEY
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         max_tokens: 4000,
@@ -386,18 +366,18 @@ async function callLLM(provider, _apiKey, prompt) {
   }
 
   if (provider === 'openrouter') {
-    const apiKey = process.env.OPENROUTER_API_KEY
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://github.com/capman-ai/capman',
+        'HTTP-Referer': 'https://github.com/Hobbydefiningdoctory/capman',
       },
       body: JSON.stringify({
-        model: 'meta-llama/llama-3.3-70b-instruct:free',
+        model: 'openai/gpt-oss-120b:free',
         max_tokens: 4000,
         messages: [{ role: 'user', content: prompt }],
+        provider: { order: ['open-inference'], allow_fallbacks: true },
       }),
     })
     const data = await res.json()
