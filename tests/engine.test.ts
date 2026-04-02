@@ -289,4 +289,119 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('explain()', () => {
+    it('returns matched capability for clear query', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.explain('Show me articles')
+      expect(result.matched.capability?.id).toBe('get_articles')
+      expect(result.matched.confidence).toBeGreaterThanOrEqual(50)
+      expect(result.matched.reasoning.length).toBeGreaterThan(0)
+    })
+
+    it('returns out of scope for irrelevant query', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.explain('Is the server down?')
+      expect(result.matched.capability).toBeNull()
+      expect(result.matched.intent).toBe('out_of_scope')
+    })
+
+    it('returns all candidates with explanations', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.explain('Show me articles')
+      expect(result.candidates.length).toBe(manifest.capabilities.length)
+      result.candidates.forEach(c => {
+        expect(c.explanation.length).toBeGreaterThan(0)
+        expect(typeof c.score).toBe('number')
+      })
+    })
+
+    it('shows would execute action for api resolver', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        baseUrl: 'https://api.test.com',
+      })
+
+      const result = await engine.explain('Show me articles')
+      expect(result.wouldExecute.action).toContain('GET')
+      expect(result.wouldExecute.action).toContain('https://api.test.com')
+      expect(result.wouldExecute.blocked).toBeNull()
+    })
+
+    it('shows blocked when privacy would prevent execution', async () => {
+      const privateConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [{
+          id: 'get_private_data',
+          name: 'Get private data',
+          description: 'Fetch private data for authenticated user.',
+          examples: ['show my private data', 'get my data'],
+          params: [],
+          returns: ['data'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/private' }] },
+          privacy: { level: 'user_owned' },
+        }],
+      }
+      const privateManifest = generate(privateConfig)
+      const engine = new CapmanEngine({
+        manifest: privateManifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        // no auth provided
+      })
+
+      const result = await engine.explain('show my private data')
+      expect(result.wouldExecute.blocked).toContain('authentication')
+    })
+
+    it('does not affect cache or learning', async () => {
+      const cache    = new MemoryCache()
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
+        manifest,
+        cache,
+        learning,
+        mode: 'cheap',
+      })
+
+      await engine.explain('Show me articles')
+      expect(await cache.size()).toBe(0)
+      const stats = await engine.getStats()
+      expect(stats?.totalQueries).toBe(0)
+    })
+
+    it('returns durationMs', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.explain('Show me articles')
+      expect(result.durationMs).toBeGreaterThanOrEqual(0)
+    })
+  })
+
 })

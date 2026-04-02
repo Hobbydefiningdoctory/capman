@@ -1,4 +1,4 @@
-import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep } from './types'
+import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType } from './types'
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
@@ -285,6 +285,148 @@ export class CapmanEngine {
     if (this.cache) await this.cache.clear()
   }
 
+  /**
+   * Explain what would happen for a query — without executing it.
+   * Shows matched capability, all candidate scores with reasoning,
+   * and what action would be taken.
+   *
+   * @example
+   * const explanation = await engine.explain('track order 1234')
+   * console.log(explanation.matched.reasoning)
+   * console.log(explanation.wouldExecute.action)
+   * console.log(explanation.candidates)
+   */
+  async explain(query: string): Promise<ExplainResult> {
+    const start = Date.now()
+
+    // ── Match ────────────────────────────────────────────────────────────────
+    let matchResult: MatchResult
+    let resolvedVia: ExplainResult['resolvedVia'] = 'keyword'
+
+    if (this.mode === 'accurate' && this.llm) {
+      matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
+      resolvedVia = 'llm'
+    } else {
+      matchResult = _match(query, this.manifest)
+    }
+
+    // ── Build candidate explanations ─────────────────────────────────────────
+    const candidates: ExplainCandidate[] = (matchResult.candidates ?? [])
+      .sort((a, b) => b.score - a.score)
+      .map(c => {
+        const cap = this.manifest.capabilities.find(mc => mc.id === c.capabilityId)
+        let explanation = ''
+
+        if (c.score === 0) {
+          explanation = 'No keyword overlap with examples or description'
+        } else if (c.score >= 90) {
+          explanation = `Strong match (${c.score}%) — query closely matches examples`
+        } else if (c.score >= 50) {
+          const qWords = query.toLowerCase().split(/\W+/).filter(Boolean)
+          const matchedWords = (cap?.examples ?? [])
+            .flatMap(e => e.toLowerCase().split(/\s+/))
+            .filter(w => qWords.includes(w) && w.length > 2)
+          const unique = [...new Set(matchedWords)].slice(0, 3)
+          explanation = unique.length
+            ? `Matched keywords: ${unique.join(', ')} (${c.score}%)`
+            : `Partial match (${c.score}%) — some keyword overlap`
+        } else {
+          explanation = `Weak match (${c.score}%) — below 50% confidence threshold, rejected`
+        }
+
+        return { capabilityId: c.capabilityId, score: c.score, matched: c.matched, explanation }
+      })
+
+    // ── Build reasoning array ────────────────────────────────────────────────
+    const reasoning: string[] = []
+    const winner = candidates.find(c => c.matched)
+    const rejected = candidates.filter(c => !c.matched && c.score > 0).slice(0, 3)
+
+    if (winner) {
+      reasoning.push(`Matched "${winner.capabilityId}" with ${winner.score}% confidence`)
+    } else {
+      reasoning.push('No capability matched above the 50% confidence threshold')
+    }
+    if (rejected.length) {
+      reasoning.push(`Rejected: ${rejected.map(r => `${r.capabilityId} (${r.score}%)`).join(', ')}`)
+    }
+    reasoning.push(`Resolved via: ${resolvedVia}`)
+    if (matchResult.extractedParams && Object.keys(matchResult.extractedParams).length) {
+      const params = Object.entries(matchResult.extractedParams)
+        .filter(([, v]) => v !== null)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ')
+      if (params) reasoning.push(`Would extract params: ${params}`)
+    }
+
+    // ── Build wouldExecute ───────────────────────────────────────────────────
+    const cap = matchResult.capability
+    let action: string | null = null
+    let blocked: string | null = null
+    let privacy: string | null = null
+    let resolverType: ResolverType | null = null
+
+    if (cap) {
+      privacy = cap.privacy.level
+      resolverType = cap.resolver.type as ResolverType
+
+      // Check if privacy would block
+      if (cap.privacy.level === 'user_owned' && !this.auth?.isAuthenticated) {
+        blocked = `Requires authentication (privacy: user_owned)`
+      } else if (cap.privacy.level === 'admin' && this.auth?.role !== 'admin') {
+        blocked = `Requires admin role (current: ${this.auth?.role ?? 'none'})`
+      }
+
+      if (!blocked) {
+        // Build action string
+        const params = matchResult.extractedParams as Record<string, string>
+
+        if (cap.resolver.type === 'api') {
+          const endpoint = (cap.resolver as ApiResolver).endpoints[0]
+          let path = endpoint.path
+          for (const [k, v] of Object.entries(params)) {
+            if (v) path = path.replace(`{${k}}`, v)
+          }
+          const base = this.baseUrl ?? ''
+          action = `${endpoint.method} ${base}${path}`
+        } else if (cap.resolver.type === 'nav') {
+          let dest = (cap.resolver as NavResolver).destination
+          for (const [k, v] of Object.entries(params)) {
+            if (v) dest = dest.replace(`{${k}}`, v)
+          }
+          action = `navigate → ${dest}`
+        } else if (cap.resolver.type === 'hybrid') {
+          const hybrid = cap.resolver as HybridResolver
+          const endpoint = hybrid.api.endpoints[0]
+          let path = endpoint.path
+          for (const [k, v] of Object.entries(params)) {
+            if (v) path = path.replace(`{${k}}`, v)
+          }
+          let dest = hybrid.nav.destination
+          for (const [k, v] of Object.entries(params)) {
+            if (v) dest = dest.replace(`{${k}}`, v)
+          }
+          const base = this.baseUrl ?? ''
+          action = `${endpoint.method} ${base}${path} + navigate → ${dest}`
+        }
+      }
+    }
+
+    return {
+      query,
+      matched: {
+        capability: matchResult.capability,
+        confidence: matchResult.confidence,
+        intent:     matchResult.intent,
+        reasoning,
+      },
+      candidates,
+      wouldExecute: { resolverType, action, privacy, blocked },
+      resolvedVia,
+      durationMs: Date.now() - start,
+    }
+  }
+  
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private resolveOptions(overrides: Partial<ResolveOptions> = {}): ResolveOptions {

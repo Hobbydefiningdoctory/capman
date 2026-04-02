@@ -71,6 +71,7 @@ function cmdHelp() {
   console.log(`    ${c.teal}validate${c.reset}  Validate an existing manifest.json`)
   console.log(`    ${c.teal}inspect${c.reset}   Print all capabilities in manifest`)
   console.log(`    ${c.teal}demo${c.reset}      Run a live demo with sample queries`)
+  console.log(`    ${c.teal}explain "query"${c.reset}    Explain what would match without executing`)
   console.log(`    ${c.teal}run${c.reset}       Run a query against your manifest`)
   console.log()
   console.log(`${c.bold}  Options:${c.reset}`)
@@ -716,12 +717,82 @@ function cmdRun() {
   console.log()
 }
 
+async function cmdExplain() {
+  header()
+  const query = args[1]
+  const manifestPath = getFlag('--manifest') ?? 'manifest.json'
+
+  if (!query) {
+    log.error('Please provide a query.')
+    console.log(`  Example: node bin/capman.js explain "show me articles"\n`)
+    process.exit(1)
+  }
+
+  const { readManifest, CapmanEngine } = requireSrc()
+
+  let manifest
+  try {
+    manifest = readManifest(manifestPath)
+  } catch (e) {
+    log.error(e.message)
+    process.exit(1)
+  }
+
+  const engine = new CapmanEngine({ manifest, cache: false, learning: false, mode: 'cheap' })
+  const result = await engine.explain(query)
+
+  console.log(`\n  ${c.bold}QUERY${c.reset}`)
+  console.log(`  "${c.bold}${query}${c.reset}"\n`)
+
+  // ── Match ──────────────────────────────────────────────────────────────────
+  console.log(`  ${c.bold}MATCH${c.reset}`)
+  if (result.matched.capability) {
+    console.log(`  ${c.green}✓  ${result.matched.capability.id}${c.reset}`)
+    console.log(`  ${c.gray}confidence:${c.reset} ${result.matched.confidence}%`)
+    console.log(`  ${c.gray}intent:${c.reset}     ${result.matched.intent}`)
+  } else {
+    console.log(`  ${c.yellow}○  OUT_OF_SCOPE${c.reset} — no capability matched\n`)
+  }
+  console.log()
+
+  // ── Reasoning ─────────────────────────────────────────────────────────────
+  console.log(`  ${c.bold}REASONING${c.reset}`)
+  result.matched.reasoning.forEach(r => {
+    console.log(`  ${c.gray}•${c.reset} ${r}`)
+  })
+  console.log()
+
+  // ── All candidates ─────────────────────────────────────────────────────────
+  console.log(`  ${c.bold}ALL CANDIDATES${c.reset}`)
+  result.candidates.forEach(cand => {
+    const marker = cand.matched ? `${c.green}✓${c.reset}` : `${c.gray}○${c.reset}`
+    const scoreColor = cand.score >= 50 ? c.green : c.gray
+    console.log(`  ${marker}  ${cand.capabilityId}`)
+    console.log(`     ${scoreColor}${cand.score}%${c.reset}  ${c.gray}${cand.explanation}${c.reset}`)
+  })
+  console.log()
+
+  // ── Would execute ──────────────────────────────────────────────────────────
+  console.log(`  ${c.bold}WOULD EXECUTE${c.reset}`)
+  if (result.wouldExecute.blocked) {
+    console.log(`  ${c.yellow}✗  Blocked — ${result.wouldExecute.blocked}${c.reset}`)
+  } else if (result.wouldExecute.action) {
+    console.log(`  ${c.green}✓  ${result.wouldExecute.action}${c.reset}`)
+    console.log(`  ${c.gray}privacy: ${result.wouldExecute.privacy}${c.reset}`)
+  } else {
+    console.log(`  ${c.yellow}○  No action — query is out of scope${c.reset}`)
+  }
+  console.log()
+  console.log(`  ${c.gray}${result.durationMs}ms  ·  via ${result.resolvedVia}${c.reset}\n`)
+}
+
 (async () => {
   switch (command) {
     case 'init':     cmdInit();          break
     case 'generate': await cmdGenerate(); break
     case 'validate': cmdValidate();      break
     case 'inspect':  cmdInspect();       break
+    case 'explain':  await cmdExplain();  break
     case 'demo':     cmdDemo();          break
     case 'run':      cmdRun();           break
     case undefined:

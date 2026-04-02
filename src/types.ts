@@ -144,3 +144,34 @@ export interface ExecutionTrace {
   /** Total duration */
   totalMs: number
 }
+
+// ─── Explain Result ───────────────────────────────────────────────────────────
+
+export interface ExplainCandidate {
+  capabilityId: string
+  score:        number
+  matched:      boolean
+  /** Human-readable explanation of why this capability scored this way */
+  explanation:  string
+}
+
+export interface ExplainResult {
+  query:      string
+  matched: {
+    capability: Capability | null
+    confidence: number
+    intent:     string
+    reasoning:  string[]
+  }
+  candidates:   ExplainCandidate[]
+  wouldExecute: {
+    resolverType: ResolverType | null
+    /** The action that would be taken — e.g. "GET https://api.com/orders/1234" */
+    action:       string | null
+    privacy:      string | null
+    /** Set if privacy enforcement would block execution */
+    blocked:      string | null
+  }
+  resolvedVia:  'keyword' | 'llm'
+  durationMs:   number
+}

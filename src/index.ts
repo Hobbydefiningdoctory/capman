@@ -20,6 +20,8 @@ export type {
   PrivacyScope,
   ResolverType,
   HttpMethod,
+  ExplainResult,
+  ExplainCandidate,
 } from './types'
 
 export {
