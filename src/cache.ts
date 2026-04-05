@@ -99,9 +99,14 @@ export class FileCache implements CacheStore {
   private async load(): Promise<void> {
     if (this.loaded) return
     try {
-      const raw = await fs.promises.readFile(this.filePath, 'utf-8')
-      this.store = new Map(Object.entries(JSON.parse(raw)))
-      logger.debug(`File cache loaded: ${this.store.size} entries`)
+      const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        this.store = new Map(Object.entries(parsed))
+        logger.debug(`File cache loaded: ${this.store.size} entries`)
+      } else {
+        logger.warn(`File cache at ${this.filePath} contained unexpected format — starting fresh`)
+      }
     } catch {
       // File doesn't exist yet — start fresh
     }

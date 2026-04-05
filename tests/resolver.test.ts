@@ -373,6 +373,72 @@ describe('resolve()', () => {
       expect(result.error).toContain('Network error')
     })
   })
+
+  describe('Null param handling', () => {
+    it('does not write null params into API URL', async () => {
+      const matchResult = match('Find resource by ID', manifest)
+      const result = await resolve(
+        matchResult,
+        { resource_id: null },
+        { baseUrl: 'https://api.test.com', dryRun: true }
+      )
+      expect(result.success).toBe(true)
+      expect(result.apiCalls?.[0].url).not.toContain('null')
+    })
+
+    it('does not write null params into nav target', async () => {
+      const matchResult = match('Take me to dashboard', manifest)
+      const result = await resolve(
+        matchResult,
+        { destination: null },
+        { dryRun: true }
+      )
+      expect(result.success).toBe(true)
+      expect(result.navTarget).not.toContain('null')
+    })
+
+    it('URL-encodes nav param values', async () => {
+      const matchResult = match('Take me to dashboard', manifest)
+      const result = await resolve(
+        matchResult,
+        { destination: 'my dashboard' },
+        { dryRun: true }
+      )
+      expect(result.navTarget).toBe('/my%20dashboard')
+    })
+  })
+
+  describe('Session param injection', () => {
+    it('injects empty string userId when explicitly set', async () => {
+      const sessionConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [{
+          id: 'get_my_data',
+          name: 'Get my data',
+          description: 'Fetch data for the current user.',
+          examples: ['get my data'],
+          params: [
+            { name: 'user_id', description: 'User ID', required: true, source: 'session' }
+          ],
+          returns: ['data'],
+          resolver: {
+            type: 'api',
+            endpoints: [{ method: 'GET', path: '/users/{user_id}/data' }],
+          },
+          privacy: { level: 'user_owned' },
+        }],
+      }
+      const m = generate(sessionConfig)
+      const matchResult = match('get my data', m)
+      const result = await resolve(matchResult, {}, {
+        baseUrl: 'https://api.test.com',
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'user', userId: '' },
+      })
+      // Empty string userId should still be injected
+      expect(result.apiCalls?.[0].url).toBe('https://api.test.com/users//data')
+    })
+  })
   
 
 })

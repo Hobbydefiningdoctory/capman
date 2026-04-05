@@ -102,10 +102,14 @@ export class FileLearningStore implements LearningStore {
   private async load(): Promise<void> {
     if (this.loaded) return
     try {
-      const raw = await fs.promises.readFile(this.filePath, 'utf-8')
+      const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
       const parsed = JSON.parse(raw)
-      this.entries = parsed.entries ?? []
-      logger.debug(`Learning store loaded: ${this.entries.length} entries`)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
+        this.entries = parsed.entries
+        logger.debug(`Learning store loaded: ${this.entries.length} entries`)
+      } else {
+        logger.warn(`Learning store at ${this.filePath} contained unexpected format — starting fresh`)
+      }
     } catch {
       // File doesn't exist yet — start fresh
     }

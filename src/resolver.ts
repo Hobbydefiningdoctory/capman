@@ -83,14 +83,14 @@ export async function resolve(
   // ── Session param injection ───────────────────────────────────────────────
   // Inject auth.userId into any params marked as source: 'session'
   const enrichedParams = { ...params }
-  if (options.auth?.userId) {
-    for (const param of capability.params) {
-      if (param.source === 'session') {
-        enrichedParams[param.name] = options.auth.userId
-        logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
-      }
+      if (options.auth?.userId !== undefined) {
+        for (const param of capability.params) {
+          if (param.source === 'session') {
+            enrichedParams[param.name] = options.auth.userId!
+            logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
+          }
+        }
     }
-  }
 
   const resolver = capability.resolver
   logger.info(`Resolving capability "${capability.id}" via ${resolver.type} resolver`)
@@ -232,7 +232,8 @@ function resolveNav(
 ): ResolveResult {
   let destination = resolver.destination
   for (const [key, value] of Object.entries(params)) {
-    destination = destination.replace(`{${key}}`, String(value))
+    if (value === null || value === undefined) continue
+    destination = destination.replace(`{${key}}`, encodeURIComponent(String(value)))
   }
   return { success: true, resolverType: 'nav', navTarget: destination }
 }
@@ -246,6 +247,7 @@ function buildUrl(
   const unused: Record<string, unknown> = {}
 
   for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue  // never write null into URLs
     if (resolved.includes(`{${key}}`)) {
       resolved = resolved.replace(`{${key}}`, encodeURIComponent(String(value)))
     } else {

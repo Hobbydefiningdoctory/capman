@@ -383,6 +383,7 @@ function toSnakeCase(str: string): string {
     .toLowerCase()
     .replace(/^_/, '')
     .replace(/__+/g, '_')
+    .replace(/_$/, '') 
 }
 
 function toHumanName(id: string): string {

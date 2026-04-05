@@ -11,7 +11,14 @@ const flags   = args.slice(1)
 
 const getFlag = (name) => {
   const i = flags.indexOf(name)
-  return i !== -1 ? flags[i + 1] : undefined
+  if (i === -1) return undefined
+  const value = flags[i + 1]
+  // If next token is another flag or doesn't exist, the flag has no value
+  if (value === undefined || value.startsWith('--')) {
+    console.error(`${'\x1b[31m'}✗${'\x1b[0m'} Flag "${name}" requires a value. Example: ${name} <value>`)
+    process.exit(1)
+  }
+  return value
 }
 
 // ─── Colors ───────────────────────────────────────────────────────────────────

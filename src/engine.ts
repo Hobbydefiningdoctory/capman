@@ -487,12 +487,19 @@ export class CapmanEngine {
       privacy = cap.privacy.level
       resolverType = cap.resolver.type as ResolverType
 
-      // Check if privacy would block
-      if (cap.privacy.level === 'user_owned' && !this.auth?.isAuthenticated) {
-        blocked = `Requires authentication (privacy: user_owned)`
-      } else if (cap.privacy.level === 'admin' && this.auth?.role !== 'admin') {
-        blocked = `Requires admin role (current: ${this.auth?.role ?? 'none'})`
+      // Check if privacy would block — mirrors checkPrivacy() in resolver.ts
+      if (cap.privacy.level === 'user_owned') {
+        if (!this.auth?.isAuthenticated) {
+          blocked = `Capability "${cap.id}" requires authentication (privacy: user_owned)`
+        }
+      } else if (cap.privacy.level === 'admin') {
+        if (!this.auth?.isAuthenticated) {
+          blocked = `Capability "${cap.id}" requires authentication (privacy: admin)`
+        } else if (this.auth.role !== 'admin') {
+          blocked = `Capability "${cap.id}" requires admin role (current role: ${this.auth.role ?? 'none'})`
+        }
       }
+  
 
       if (!blocked) {
         // Build action string
@@ -576,14 +583,14 @@ export class CapmanEngine {
     // ── Per-minute rate limit ────────────────────────────────────────────────
     const windowElapsed = now - this.llmWindowStart
     if (windowElapsed >= 60_000) {
-      // Reset window
       this.llmCallsThisMinute = 0
       this.llmWindowStart     = now
     }
 
     if (this.llmCallsThisMinute >= this.maxLLMCallsPerMinute) {
-      const windowResetIn = Math.ceil((60_000 - windowElapsed) / 1000)
-      return `rate limit reached (${this.maxLLMCallsPerMinute}/min) — resets in ${windowResetIn}s`
+      // Recalculate elapsed after possible window reset above
+      const resetIn = Math.ceil((60_000 - (now - this.llmWindowStart)) / 1000)
+      return `rate limit reached (${this.maxLLMCallsPerMinute}/min) — resets in ${Math.max(0, resetIn)}s`
     }
 
     // Reserve the slot atomically before the call happens
@@ -603,9 +610,7 @@ export class CapmanEngine {
    * Records a failed LLM call — may open the circuit breaker.
    */
   private recordLLMFailure(): void {
-    this.llmCallsThisMinute++
     this.llmConsecutiveFails++
-    this.llmLastCallAt = Date.now()
     if (this.llmConsecutiveFails >= this.llmCircuitBreakerThreshold) {
       this.llmCircuitOpenAt = Date.now()
       logger.warn(`LLM circuit breaker opened after ${this.llmConsecutiveFails} consecutive failures — pausing for ${this.llmCircuitBreakerResetMs / 1000}s`)

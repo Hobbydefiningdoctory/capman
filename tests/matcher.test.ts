@@ -167,5 +167,35 @@ describe('match()', () => {
       expect(result.match.capability?.id).toBe('get_articles')
     })
   })
+
+  describe('matchWithLLM edge cases', () => {
+    it('returns out_of_scope when LLM returns unknown capability ID', async () => {
+      const result = await matchWithLLM('show me articles', manifest, {
+        llm: async () => JSON.stringify({
+          matched_capability: 'nonexistent_capability_xyz',
+          confidence: 90,
+          intent: 'retrieval',
+          reasoning: 'test',
+          extracted_params: {},
+        }),
+      })
+      expect(result.capability).toBeNull()
+      expect(result.intent).toBe('out_of_scope')
+      expect(result.confidence).toBe(0)
+    })
+
+    it('handles undefined reasoning from LLM gracefully', async () => {
+      const result = await matchWithLLM('show me articles', manifest, {
+        llm: async () => JSON.stringify({
+          matched_capability: 'OUT_OF_SCOPE',
+          confidence: 0,
+          intent: 'out_of_scope',
+          extracted_params: {},
+          // no reasoning field
+        }),
+      })
+      expect(result.reasoning).toBe('No reasoning provided')
+    })
+  })
   
 })

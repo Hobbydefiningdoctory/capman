@@ -92,10 +92,6 @@ function extractParams(query: string, cap: Capability): Record<string, string | 
     // e.g. "profile for johndoe" → johndoe
     //      "articles by jane"   → jane
     //      "tag javascript"     → javascript
-    // Use param name and description as hints for what to look for
-    const paramHints = [param.name, ...param.description.toLowerCase().split(/\s+/)]
-      .filter(w => w.length > 2)
-
     // Try keyword-based extraction first
     const keywords = [
       `for `, `by `, `about `, `named `, `called `,
@@ -257,21 +253,28 @@ export async function matchWithLLM(
   const clean = raw.replace(/```json|```/g, '').trim()
   const parsed = JSON.parse(clean)
 
-  const isOOS    = parsed.matched_capability === 'OUT_OF_SCOPE'
+  const isOOS      = parsed.matched_capability === 'OUT_OF_SCOPE'
   const capability = isOOS
     ? null
     : manifest.capabilities.find(c => c.id === parsed.matched_capability) ?? null
 
+  // If LLM returned an unknown capability ID, treat as out of scope
+  const effectivelyOOS = isOOS || capability === null
+
+  if (!effectivelyOOS && capability === null) {
+    logger.warn(`LLM returned unknown capability ID: "${parsed.matched_capability}" — treating as out_of_scope`)
+  }
+
   return {
     capability,
-    confidence: parsed.confidence,
-    intent: isOOS ? 'out_of_scope' : parsed.intent,
+    confidence:      effectivelyOOS ? 0 : parsed.confidence,
+    intent:          effectivelyOOS ? 'out_of_scope' : parsed.intent,
     extractedParams: parsed.extracted_params ?? {},
-    reasoning: parsed.reasoning,
-    candidates: capability ? [{
+    reasoning:       parsed.reasoning ?? 'No reasoning provided',
+    candidates:      capability ? [{
       capabilityId: capability.id,
-      score: parsed.confidence,
-      matched: true,
+      score:        parsed.confidence,
+      matched:      true,
     }] : [],
+   }
   }
-}
