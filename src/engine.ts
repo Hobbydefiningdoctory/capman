@@ -1,4 +1,4 @@
-import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType } from './types'
+import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType, MatchCandidate } from './types'
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
@@ -9,6 +9,7 @@ import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
 import type { MatchMode } from './index'
 import { MemoryCache, normalizeQuery } from './cache'
+import { VERSION } from './version'
 
 // ─── Engine Options ───────────────────────────────────────────────────────────
 
@@ -127,6 +128,13 @@ export class CapmanEngine {
       : (options.learning ?? new MemoryLearningStore())
 
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
+    // ── Manifest version compatibility check ─────────────────────────────────
+    if (options.manifest.version && options.manifest.version !== VERSION) {
+      logger.warn(
+        `Manifest version "${options.manifest.version}" differs from engine version "${VERSION}". ` +
+        `Run: npx capman generate  to regenerate your manifest.`
+      )
+    }
   }
 
   /**
@@ -260,6 +268,39 @@ export class CapmanEngine {
     }
     }
 
+    // ── Step 2.5: Apply learning boost ───────────────────────────────────────
+    if (matchResult.candidates.length > 0 && this.learning) {
+      const boosted = await this.applyLearningBoost(query, matchResult.candidates)
+
+      // Re-select winner after boost
+      const newWinner = boosted.reduce((a, b) => a.score > b.score ? a : b)
+      const oldWinner = matchResult.candidates.find(c => c.matched)
+
+      if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
+        // Boost changed the winner — update matchResult
+        const newCap = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
+        matchResult = {
+          ...matchResult,
+          capability:    newCap,
+          confidence:    newWinner.score,
+          intent:        newCap ? (
+            newCap.resolver.type === 'api'    ? 'retrieval'  :
+            newCap.resolver.type === 'nav'    ? 'navigation' : 'hybrid'
+          ) : 'out_of_scope',
+          candidates:    boosted.map(c => ({ ...c, matched: c.capabilityId === newWinner.capabilityId })),
+          reasoning:     `Matched "${newWinner.capabilityId}" via keyword scoring with learning boost (score: ${newWinner.score})`,
+        }
+        logger.info(`Learning boost changed winner: "${oldWinner?.capabilityId ?? 'none'}" → "${newWinner.capabilityId}"`)
+      } else {
+        // Same winner but scores updated
+        matchResult = {
+          ...matchResult,
+          confidence: newWinner.score,
+          candidates: boosted.map(c => ({ ...c, matched: c.capabilityId === (oldWinner?.capabilityId ?? '') })),
+        }
+      }
+    }
+
     // ── Step 3: Privacy check ────────────────────────────────────────────────
     if (matchResult.capability) {
       const privacyLevel = matchResult.capability.privacy.level
@@ -367,12 +408,19 @@ export class CapmanEngine {
    * Shows matched capability, all candidate scores with reasoning,
    * and what action would be taken.
    *
+   * Note: explain() does not write to cache or learning store.
+   * However, if mode is 'balanced' or 'accurate' and an LLM call is made,
+   * it consumes LLM quota and affects the cooldown/rate limit state
+   * shared with ask(). This is by design — explain() is not free
+   * when LLM matching is involved.
+   *
    * @example
    * const explanation = await engine.explain('track order 1234')
    * console.log(explanation.matched.reasoning)
    * console.log(explanation.wouldExecute.action)
    * console.log(explanation.candidates)
    */
+  
   async explain(query: string): Promise<ExplainResult> {
     const start = Date.now()
 
@@ -615,6 +663,52 @@ export class CapmanEngine {
       this.llmCircuitOpenAt = Date.now()
       logger.warn(`LLM circuit breaker opened after ${this.llmConsecutiveFails} consecutive failures — pausing for ${this.llmCircuitBreakerResetMs / 1000}s`)
     }
+  }
+
+
+  /**
+   * Applies learning boost to match candidates based on historical usage.
+   * Capabilities that have previously matched similar keywords get a small
+   * score boost — capped at +15 to avoid overriding strong keyword matches.
+   */
+  private async applyLearningBoost(
+    query: string,
+    candidates: MatchCandidate[]
+  ): Promise<MatchCandidate[]> {
+    if (!this.learning) return candidates
+
+    const stats = await this.learning.getStats()
+    if (!stats || Object.keys(stats.index).length === 0) return candidates
+
+    const qWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 2)
+    if (qWords.length === 0) return candidates
+
+    return candidates.map(candidate => {
+      let boost = 0
+
+      for (const word of qWords) {
+        const wordIndex = stats.index[word]
+        if (!wordIndex) continue
+        const hits = wordIndex[candidate.capabilityId] ?? 0
+        if (hits > 0) {
+          // Logarithmic boost — diminishing returns after first few hits
+          boost += Math.min(5, Math.log2(hits + 1) * 2)
+        }
+      }
+
+      const cappedBoost = Math.min(15, Math.round(boost))
+      if (cappedBoost > 0) {
+        logger.debug(
+          `Learning boost: "${candidate.capabilityId}" +${cappedBoost} points ` +
+          `(was ${candidate.score}%)`
+        )
+      }
+
+      return {
+        ...candidate,
+        score: Math.min(100, candidate.score + cappedBoost),
+      }
+    })
   }
   
   // ── Private helpers ────────────────────────────────────────────────────────

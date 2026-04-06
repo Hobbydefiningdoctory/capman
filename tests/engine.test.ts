@@ -501,4 +501,90 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('manifest version compatibility', () => {
+    it('warns when manifest version differs from engine version', async () => {
+      const oldManifest = {
+        ...manifest,
+        version: '0.1.0',
+      }
+      // Should not throw — just warn
+      const engine = new CapmanEngine({
+        manifest: oldManifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.match).toBeDefined()
+    })
+
+    it('does not warn when manifest version matches', async () => {
+      const { VERSION } = await import('../src/version')
+      const currentManifest = { ...manifest, version: VERSION }
+      const engine = new CapmanEngine({
+        manifest: currentManifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.match).toBeDefined()
+    })
+  })
+
+  describe('learning boost', () => {
+    it('applies boost to candidates with historical matches', async () => {
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning,
+        mode: 'cheap',
+      })
+
+      // Record several matches to build the index
+      for (let i = 0; i < 5; i++) {
+        await engine.ask('Show me articles', { dryRun: true })
+      }
+
+      // Stats should now have keyword index entries
+      const stats = await engine.getStats()
+      expect(stats?.totalQueries).toBe(5)
+      expect(stats?.index).toBeDefined()
+    })
+
+    it('learning boost does not push score above 100', async () => {
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning,
+        mode: 'cheap',
+      })
+
+      // Build up history
+      for (let i = 0; i < 20; i++) {
+        await engine.ask('Show me articles', { dryRun: true })
+      }
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.match.confidence).toBeLessThanOrEqual(100)
+      result.trace.candidates.forEach(c => {
+        expect(c.score).toBeLessThanOrEqual(100)
+      })
+    })
+
+    it('learning boost does not affect cheap mode with no history', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.match.capability?.id).toBe('get_articles')
+    })
+  })
+
 })

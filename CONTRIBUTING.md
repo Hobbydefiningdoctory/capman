@@ -27,7 +27,7 @@ have an idea to make that better. Let's hear it.
 
 ```bash
 # Clone the repo
-git clone https://github.com/your-username/capman.git
+git clone https://github.com/Hobbydefiningdoctory/capman.git
 cd capman
 
 # Install dependencies

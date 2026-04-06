@@ -83,14 +83,14 @@ export async function resolve(
   // ── Session param injection ───────────────────────────────────────────────
   // Inject auth.userId into any params marked as source: 'session'
   const enrichedParams = { ...params }
-      if (options.auth?.userId !== undefined) {
-        for (const param of capability.params) {
-          if (param.source === 'session') {
-            enrichedParams[param.name] = options.auth.userId!
-            logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
-          }
-        }
+  if (options.auth?.userId !== undefined && options.auth.userId !== '') {
+    for (const param of capability.params) {
+      if (param.source === 'session') {
+        enrichedParams[param.name] = options.auth.userId!
+        logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
+      }
     }
+  }
 
   const resolver = capability.resolver
   logger.info(`Resolving capability "${capability.id}" via ${resolver.type} resolver`)

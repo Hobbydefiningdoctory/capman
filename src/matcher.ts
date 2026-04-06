@@ -261,7 +261,7 @@ export async function matchWithLLM(
   // If LLM returned an unknown capability ID, treat as out of scope
   const effectivelyOOS = isOOS || capability === null
 
-  if (!effectivelyOOS && capability === null) {
+  if (!isOOS && capability === null) {
     logger.warn(`LLM returned unknown capability ID: "${parsed.matched_capability}" — treating as out_of_scope`)
   }
 

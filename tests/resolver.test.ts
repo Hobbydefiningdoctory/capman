@@ -409,7 +409,7 @@ describe('resolve()', () => {
   })
 
   describe('Session param injection', () => {
-    it('injects empty string userId when explicitly set', async () => {
+    it('does not inject empty string userId', async () => {
       const sessionConfig: CapmanConfig = {
         app: 'test-app',
         capabilities: [{
@@ -435,8 +435,9 @@ describe('resolve()', () => {
         dryRun: true,
         auth: { isAuthenticated: true, role: 'user', userId: '' },
       })
-      // Empty string userId should still be injected
-      expect(result.apiCalls?.[0].url).toBe('https://api.test.com/users//data')
+      // Empty string userId should NOT be injected — avoids /users//data
+      expect(result.apiCalls?.[0].url).not.toContain('//data')
+      expect(result.apiCalls?.[0].url).toBe('https://api.test.com/users/{user_id}/data')
     })
   })
   
