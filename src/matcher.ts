@@ -52,7 +52,7 @@ function scoreCapability(query: string, cap: Capability): number {
   return Math.min(Math.round(score), 100)
 }
 
-function resolverToIntent(cap: Capability): MatchResult['intent'] {
+export function resolverToIntent(cap: Capability): MatchResult['intent'] {
   const t = cap.resolver.type
   if (t === 'api')    return 'retrieval'
   if (t === 'nav')    return 'navigation'
