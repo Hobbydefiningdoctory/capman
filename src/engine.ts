@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry, KeywordStats } from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams } from './matcher'
 import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -274,8 +274,8 @@ export class CapmanEngine {
     }
     }
 
-    const preBoostMatchResult = matchResult
-
+    const preBoostMatchResult = matchResult  // kept for learning recording only — prevents feedback loop
+    
     // ── Step 2.5: Apply learning boost ───────────────────────────────────────
     if (matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
       const boosted = await this.applyLearningBoost(query, matchResult.candidates)
@@ -287,7 +287,7 @@ export class CapmanEngine {
         if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
           // Boost changed the winner — re-extract params for the new capability
           const newCap = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
-          const newParams = newCap ? _match(query, { ...this.manifest, capabilities: [newCap] }).extractedParams : {}
+          const newParams = newCap ? extractParams(query, newCap) : {}
           matchResult = {
             ...matchResult,
             capability:      newCap,
@@ -320,10 +320,13 @@ export class CapmanEngine {
       })
     }
 
-    // ── Step 4: Cache the match result ───────────────────────────────────────
-    if (this.cache && preBoostMatchResult.capability) {
+    // ── Step 4: Cache the match result (public capabilities only) ─────────────
+    // Non-public capabilities are never cached — prevents auth bypass where
+    // User A's cached match is served to User B without privacy enforcement.
+    if (this.cache && matchResult.capability
+        && matchResult.capability.privacy.level === 'public') {
       const queryKey = normalizeQuery(query)
-      await this.cache.set(queryKey, preBoostMatchResult)
+      await this.cache.set(queryKey, matchResult)
     }
     
     // ── Step 5: Resolve ──────────────────────────────────────────────────────
@@ -367,8 +370,10 @@ export class CapmanEngine {
     }
 
     // ── Step 7: Record learning ──────────────────────────────────────────────
-    await this.recordLearning(query, matchResult, resolvedVia)
-
+    // Record the pre-boost match result — not the boosted one.
+    // Recording the boosted winner would reinforce it further on every call,
+    // creating a feedback loop that permanently displaces keyword matches.
+    await this.recordLearning(query, preBoostMatchResult, resolvedVia)
     const trace: ExecutionTrace = {
       query,
       candidates: matchResult.candidates,
@@ -491,7 +496,7 @@ export class CapmanEngine {
         const oldWinner = matchResult.candidates.find(c => c.matched)
         if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
           const newCap    = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
-          const newParams = newCap ? _match(query, { ...this.manifest, capabilities: [newCap] }).extractedParams : {}
+          const newParams = newCap ? extractParams(query, newCap) : {}
           matchResult = {
             ...matchResult,
             capability:      newCap,

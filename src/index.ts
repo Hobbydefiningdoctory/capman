@@ -36,6 +36,7 @@ export {
 export {
   match,
   matchWithLLM,
+  extractParams,
 } from './matcher'
 export type { LLMMatcherOptions } from './matcher'
 

@@ -1,7 +1,22 @@
 'use strict'
 
+const path = require('path')
 const fs   = require('fs')
 const { header, log, c, flags, getFlag, requireSrc } = require('./shared')
+// ─── Path safety guard ────────────────────────────────────────────────────────
+
+function safeOutputPath(rawPath, cwd) {
+  const resolved = path.resolve(cwd, rawPath)
+  if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
+    log.error(`Output path "${rawPath}" resolves outside the working directory.`)
+    console.log(`  Resolved: ${resolved}`)
+    console.log(`  Allowed:  ${cwd}`)
+    process.exit(1)
+  }
+  return resolved
+}
+
+
 
 // ─── AI prompt builder ────────────────────────────────────────────────────────
 
@@ -120,11 +135,13 @@ module.exports = async function cmdGenerate() {
   header()
   const { generate, loadConfig, writeManifest, validate, parseOpenAPI } = requireSrc()
 
-  const fromFlag  = getFlag('--from')
+const fromFlag  = getFlag('--from')
   const aiFlag    = flags.includes('--ai')
-  const outPath   = getFlag('--out') ?? 'manifest.json'
-  const configOut = getFlag('--config-out') ?? 'capman.config.js'
+  const cwd       = process.cwd()
+  const outPath   = safeOutputPath(getFlag('--out') ?? 'manifest.json', cwd)
+  const configOut = safeOutputPath(getFlag('--config-out') ?? 'capman.config.js', cwd)
 
+  
   // ── Path 1: OpenAPI parser ───────────────────────────────────────────────
   if (fromFlag) {
     log.info(`Parsing OpenAPI spec: ${fromFlag}`)
