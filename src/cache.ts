@@ -52,6 +52,7 @@ export function buildCacheKey(
 
 const MEMORY_CACHE_MAX = 512
 
+
 export class MemoryCache implements CacheStore {
   private store = new Map<string, CacheEntry>()
 
@@ -85,6 +86,8 @@ export class MemoryCache implements CacheStore {
 }
 
 // ─── File Cache ───────────────────────────────────────────────────────────────
+
+const FILE_CACHE_MAX = 2048
 
 export class FileCache implements CacheStore {
   private filePath: string
@@ -139,6 +142,13 @@ export class FileCache implements CacheStore {
 
   async set(key: string, result: MatchResult): Promise<void> {
     await this.load()
+    if (this.store.size >= FILE_CACHE_MAX) {
+      const oldest = this.store.keys().next().value
+      if (oldest !== undefined) {
+        this.store.delete(oldest)
+        logger.debug(`File cache evicted oldest entry (max size ${FILE_CACHE_MAX} reached)`)
+      }
+    }
     this.store.set(key, {
       query: key,
       result,

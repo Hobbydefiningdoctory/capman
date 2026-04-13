@@ -24,6 +24,12 @@ export interface ResolveOptions {
   timeoutMs?: number
 }
 
+function redactParams(params: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(params).map(([k, v]) => [k, v != null ? '[REDACTED]' : 'null'])
+  )
+}
+
 function checkPrivacy(
   capability: import('./types').Capability,
   auth?: AuthContext
@@ -87,14 +93,14 @@ export async function resolve(
     for (const param of capability.params) {
       if (param.source === 'session') {
         enrichedParams[param.name] = options.auth.userId!
-        logger.debug(`Injected session param "${param.name}" = "${options.auth.userId}"`)
+        logger.debug(`Injected session param "${param.name}" (value redacted)`)
       }
     }
   }
 
   const resolver = capability.resolver
   logger.info(`Resolving capability "${capability.id}" via ${resolver.type} resolver`)
-  logger.debug(`Params: ${JSON.stringify(params)}`)
+  logger.debug(`Params: ${JSON.stringify(redactParams(params))}`)
   logger.debug(`Options: baseUrl=${options.baseUrl} dryRun=${options.dryRun}`)
 
   try {

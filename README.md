@@ -66,6 +66,29 @@ console.log(result.resolvedVia)             // 'keyword' | 'llm' | 'cache'
 console.log(result.trace.reasoning)         // ['Matched "check_product_availability" with 100% confidence', ...]
 ```
 
+
+### ⚠️ Concurrency Warning
+
+`CapmanEngine` is **not safe** for sharing across concurrent async request handlers. The LLM rate limiter, circuit breaker, and learning index cache are instance-level mutable state.
+
+In a Node.js server, create one engine per request:
+
+```typescript
+// ✅ Safe
+app.post('/ask', async (req, res) => {
+  const engine = new CapmanEngine({ manifest, llm })
+  const result = await engine.ask(req.body.query)
+  res.json(result)
+})
+
+// ❌ Unsafe under concurrent load
+const engine = new CapmanEngine({ manifest, llm })
+app.post('/ask', async (req, res) => {
+  const result = await engine.ask(req.body.query)  // race condition
+  res.json(result)
+})
+```
+
 **3. See it live**
 
 ```bash

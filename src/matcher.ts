@@ -1,7 +1,7 @@
 import type { Capability, Manifest, MatchResult } from './types'
 import { logger } from './logger'
 
-const STOPWORDS = new Set([
+  export const STOPWORDS = new Set([
   'show', 'me', 'the', 'get', 'find', 'fetch', 'give', 'please',
   'can', 'you', 'i', 'want', 'to', 'a', 'an', 'my', 'our', 'your',
   'what', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -200,7 +200,7 @@ export function match(query: string, manifest: Manifest): MatchResult {
 
   const params = extractParams(query, best)
   logger.info(`Matched "${best.id}" at ${bestScore}% confidence`)
-  logger.debug(`Extracted params: ${JSON.stringify(params)}`)
+  logger.debug(`Extracted params: ${JSON.stringify(Object.fromEntries(Object.entries(params).map(([k, v]) => [k, v != null ? '[REDACTED]' : 'null'])))}`)
 
   // Matched return:
   return {
@@ -254,7 +254,20 @@ ${JSON.stringify({ user_query: query })}
 
   const raw   = await options.llm(prompt)
   const clean = raw.replace(/```json|```/g, '').trim()
-  const parsed = JSON.parse(clean)
+
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(clean)
+  } catch {
+    throw new Error(`LLM_PARSE_ERROR: LLM returned invalid JSON. First 300 chars: ${clean.slice(0, 300)}`)
+  }
+
+  if (typeof parsed.matched_capability !== 'string') {
+    throw new Error(`LLM_PARSE_ERROR: missing "matched_capability" field in response`)
+  }
+  if (typeof parsed.confidence !== 'number') {
+    throw new Error(`LLM_PARSE_ERROR: missing numeric "confidence" field in response`)
+  }
 
   const isOOS      = parsed.matched_capability === 'OUT_OF_SCOPE'
   const capability = isOOS
@@ -270,14 +283,14 @@ ${JSON.stringify({ user_query: query })}
 
   return {
     capability,
-    confidence:      effectivelyOOS ? 0 : parsed.confidence,
-    intent:          effectivelyOOS ? 'out_of_scope' : parsed.intent,
-    extractedParams: parsed.extracted_params ?? {},
-    reasoning:       parsed.reasoning ?? 'No reasoning provided',
+    confidence:      effectivelyOOS ? 0 : parsed.confidence as number,
+    intent:          effectivelyOOS ? 'out_of_scope' : parsed.intent as MatchResult['intent'],
+    extractedParams: (parsed.extracted_params ?? {}) as Record<string, string | null>,
+    reasoning:       (parsed.reasoning as string) ?? 'No reasoning provided',
     candidates:      capability ? [{
       capabilityId: capability.id,
-      score:        parsed.confidence,
+      score:        parsed.confidence as number,
       matched:      true,
     }] : [],
-   }
+  }
   }

@@ -3,6 +3,7 @@ import * as path from 'path'
 import type { MatchResult } from './types'
 import { logger } from './logger'
 const MAX_LEARNING_ENTRIES = 10_000
+import { STOPWORDS } from './matcher'
 
 // ─── Learning Entry ───────────────────────────────────────────────────────────
 
@@ -57,8 +58,8 @@ function computeStats(entries: LearningEntry[]): KeywordStats {
 
     if (entry.capabilityId) {
       const words = entry.query.toLowerCase()
-        .split(/\W+/)
-        .filter(w => w.length > 2)
+      .split(/\W+/)
+      .filter(w => w.length > 2 && !STOPWORDS.has(w))
 
       for (const word of words) {
         if (!index[word]) index[word] = {}

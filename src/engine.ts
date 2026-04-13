@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry, KeywordStats } from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS } from './matcher'
 import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -13,6 +13,25 @@ import { VERSION } from './version'
 
 // ─── Engine Options ───────────────────────────────────────────────────────────
 
+/**
+ * Options for constructing a CapmanEngine instance.
+ *
+ * ⚠️  CONCURRENCY: CapmanEngine is not safe for sharing across concurrent
+ * async request handlers. The LLM rate limiter, circuit breaker, and
+ * learning index cache are all instance-level mutable state. In an
+ * Express/Fastify/etc. server, either:
+ *   (a) Create one engine per request — safest, no shared state
+ *   (b) Use a single instance only with cheap mode (no LLM calls)
+ *   (c) Add an external mutex around LLM calls if sharing is required
+ *
+ * @example
+ * // Safe — per-request engine
+ * app.post('/ask', async (req, res) => {
+ *   const engine = new CapmanEngine({ manifest, llm, mode: 'balanced' })
+ *   const result = await engine.ask(req.body.query)
+ *   res.json(result)
+ * })
+ */
 export interface EngineOptions {
   /** The capability manifest to use */
   manifest: Manifest
@@ -136,9 +155,12 @@ export class CapmanEngine {
     const manifestMajorMinor = options.manifest.version?.split('.').slice(0, 2).join('.')
     const engineMajorMinor   = VERSION.split('.').slice(0, 2).join('.')
     if (manifestMajorMinor && manifestMajorMinor !== engineMajorMinor) {
-      logger.warn(
-        `Manifest version "${options.manifest.version}" differs from engine version "${VERSION}". ` +
-        `Run: npx capman generate  to regenerate your manifest.`
+      // Use console.warn directly — must be visible regardless of logger level
+      // Default log level is 'silent' so logger.warn would never be seen
+      console.warn(
+        `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
+        `different engine version than "${VERSION}". If you experience matching issues, ` +
+        `regenerate with: npx capman generate`
       )
     }
   }
@@ -221,8 +243,9 @@ export class CapmanEngine {
               this.recordLLMSuccess()
               resolvedVia = 'llm'
               steps.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
-            } catch (err) {
-              this.recordLLMFailure()
+              } catch (err) {
+              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+              if (!isParseError) this.recordLLMFailure()
               logger.warn(`LLM call failed — falling back to keyword: ${err}`)
               const t2 = Date.now()
               matchResult = _match(query, this.manifest)
@@ -262,8 +285,9 @@ export class CapmanEngine {
             this.recordLLMSuccess()
             resolvedVia = 'llm'
             steps.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
-          } catch (err) {
-            this.recordLLMFailure()
+            } catch (err) {
+            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+            if (!isParseError) this.recordLLMFailure()
             logger.warn(`LLM call failed — falling back to keyword: ${err}`)
             steps.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t2, detail: String(err) })
             matchResult = keywordResult
@@ -277,11 +301,16 @@ export class CapmanEngine {
     const preBoostMatchResult = matchResult  // kept for learning recording only — prevents feedback loop
     
     // ── Step 2.5: Apply learning boost ───────────────────────────────────────
-    if (matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
+      const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
+      if (hasKeywordSignal && matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
       const boosted = await this.applyLearningBoost(query, matchResult.candidates)
 
       if (boosted.length > 0) {
-        const newWinner = boosted.reduce((a, b) => a.score > b.score ? a : b)
+        const newWinner = boosted.reduce((a, b) => {
+          if (b.score > a.score) return b
+          if (b.score === a.score && a.matched) return a  // original winner wins ties
+          return a
+        })
         const oldWinner = matchResult.candidates.find(c => c.matched)
 
         if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
@@ -452,9 +481,10 @@ export class CapmanEngine {
             matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
             this.recordLLMSuccess()
             resolvedVia = 'llm'
-          } catch (err) {
-            this.recordLLMFailure()
-            logger.warn(`explain(): LLM call failed — falling back to keyword: ${err}`)
+            } catch (err) {
+            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+            if (!isParseError) this.recordLLMFailure()
+            logger.warn(`LLM call failed — falling back to keyword: ${err}`)
             matchResult = _match(query, this.manifest)
           }
         }
@@ -476,9 +506,10 @@ export class CapmanEngine {
             matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
             this.recordLLMSuccess()
             resolvedVia = 'llm'
-          } catch (err) {
-            this.recordLLMFailure()
-            logger.warn(`explain(): LLM call failed — falling back to keyword: ${err}`)
+            } catch (err) {
+            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+            if (!isParseError) this.recordLLMFailure()
+            logger.warn(`LLM call failed — falling back to keyword: ${err}`)
             matchResult = keywordResult
           }
         }
@@ -489,10 +520,15 @@ export class CapmanEngine {
     }
 
     // ── Apply learning boost (same as ask()) ─────────────────────────────────
-    if (matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
+      const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
+      if (hasKeywordSignal && matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
       const boosted = await this.applyLearningBoost(query, matchResult.candidates)
       if (boosted.length > 0) {
-        const newWinner = boosted.reduce((a, b) => a.score > b.score ? a : b)
+        const newWinner = boosted.reduce((a, b) => {
+          if (b.score > a.score) return b
+          if (b.score === a.score && a.matched) return a  // original winner wins ties
+          return a
+        })
         const oldWinner = matchResult.candidates.find(c => c.matched)
         if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
           const newCap    = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
@@ -726,7 +762,7 @@ export class CapmanEngine {
     const stats = this.cachedStats
     if (!stats || Object.keys(stats.index).length === 0) return candidates
 
-    const qWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 2)
+    const qWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOPWORDS.has(w))
     if (qWords.length === 0) return candidates
 
     return candidates.map(candidate => {
