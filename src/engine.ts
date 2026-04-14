@@ -2,7 +2,7 @@ import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, E
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
-import type { LearningStore, LearningEntry, KeywordStats } from './learning'
+import type { LearningStore, LearningEntry} from './learning'
 import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS } from './matcher'
 import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
@@ -113,10 +113,6 @@ export class CapmanEngine {
   private llmCooldownMs:               number
   private llmCircuitBreakerThreshold:  number
   private llmCircuitBreakerResetMs:    number
-
-  // ── Learning index cache ──────────────────────────────────────────────────
-  private cachedStats:      KeywordStats | null = null
-  private statsInvalidated: boolean             = true
 
   // ── LLM rate limiting state ────────────────────────────────────────────────
   private llmCallsThisMinute:    number   = 0
@@ -299,44 +295,9 @@ export class CapmanEngine {
     }
 
     const preBoostMatchResult = matchResult  // kept for learning recording only — prevents feedback loop
-    
+
     // ── Step 2.5: Apply learning boost ───────────────────────────────────────
-      const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
-      if (hasKeywordSignal && matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
-      const boosted = await this.applyLearningBoost(query, matchResult.candidates)
-
-      if (boosted.length > 0) {
-        const newWinner = boosted.reduce((a, b) => {
-          if (b.score > a.score) return b
-          if (b.score === a.score && a.matched) return a  // original winner wins ties
-          return a
-        })
-        const oldWinner = matchResult.candidates.find(c => c.matched)
-
-        if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
-          // Boost changed the winner — re-extract params for the new capability
-          const newCap = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
-          const newParams = newCap ? extractParams(query, newCap) : {}
-          matchResult = {
-            ...matchResult,
-            capability:      newCap,
-            confidence:      newWinner.score,
-            intent:          newCap ? resolverToIntent(newCap) : 'out_of_scope',
-            extractedParams: newParams,
-            candidates:      boosted.map(c => ({ ...c, matched: c.capabilityId === newWinner.capabilityId })),
-            reasoning:       `Matched "${newWinner.capabilityId}" via learning boost (score: ${newWinner.score})`,
-          }
-          logger.info(`Learning boost changed winner: "${oldWinner?.capabilityId ?? 'none'}" → "${newWinner.capabilityId}"`)
-        } else {
-          // Same winner — update scores only
-          matchResult = {
-            ...matchResult,
-            confidence: newWinner.score,
-            candidates: boosted.map(c => ({ ...c, matched: c.capabilityId === (oldWinner?.capabilityId ?? '') })),
-          }
-        }
-      }
-    }
+    matchResult = await this.applyBoostToMatchResult(query, matchResult)
 
     // ── Step 3: Privacy check ────────────────────────────────────────────────
     if (matchResult.capability) {
@@ -520,37 +481,7 @@ export class CapmanEngine {
     }
 
     // ── Apply learning boost (same as ask()) ─────────────────────────────────
-      const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
-      if (hasKeywordSignal && matchResult.candidates.length > 0 && this.learning && this.mode !== 'cheap') {
-      const boosted = await this.applyLearningBoost(query, matchResult.candidates)
-      if (boosted.length > 0) {
-        const newWinner = boosted.reduce((a, b) => {
-          if (b.score > a.score) return b
-          if (b.score === a.score && a.matched) return a  // original winner wins ties
-          return a
-        })
-        const oldWinner = matchResult.candidates.find(c => c.matched)
-        if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
-          const newCap    = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
-          const newParams = newCap ? extractParams(query, newCap) : {}
-          matchResult = {
-            ...matchResult,
-            capability:      newCap,
-            confidence:      newWinner.score,
-            intent:          newCap ? resolverToIntent(newCap) : 'out_of_scope',
-            extractedParams: newParams,
-            candidates:      boosted.map(c => ({ ...c, matched: c.capabilityId === newWinner.capabilityId })),
-            reasoning:       `Matched "${newWinner.capabilityId}" via learning boost (score: ${newWinner.score})`,
-          }
-        } else {
-          matchResult = {
-            ...matchResult,
-            confidence: newWinner.score,
-            candidates: boosted.map(c => ({ ...c, matched: c.capabilityId === (oldWinner?.capabilityId ?? '') })),
-          }
-        }
-      }
-    }
+    matchResult = await this.applyBoostToMatchResult(query, matchResult)
 
     // ── Build candidate explanations ─────────────────────────────────────────
     const candidates: ExplainCandidate[] = matchResult.candidates
@@ -742,6 +673,51 @@ export class CapmanEngine {
     }
   }
 
+  /**
+   * Applies learning boost to a MatchResult and returns the updated result.
+   * Shared by ask() and explain() to avoid logic divergence.
+   */
+  private async applyBoostToMatchResult(
+    query: string,
+    matchResult: MatchResult
+  ): Promise<MatchResult> {
+    const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
+    if (!hasKeywordSignal || matchResult.candidates.length === 0 || !this.learning || this.mode === 'cheap') {
+      return matchResult
+    }
+
+    const boosted = await this.applyLearningBoost(query, matchResult.candidates)
+    if (boosted.length === 0) return matchResult
+
+    const newWinner = boosted.reduce((a, b) => {
+      if (b.score > a.score) return b
+      if (b.score === a.score && a.matched) return a  // original winner wins ties
+      return a
+    })
+    const oldWinner = matchResult.candidates.find(c => c.matched)
+
+    if (newWinner.capabilityId !== oldWinner?.capabilityId && newWinner.score >= this.threshold) {
+      const newCap    = this.manifest.capabilities.find(c => c.id === newWinner.capabilityId) ?? null
+      const newParams = newCap ? extractParams(query, newCap) : {}
+      logger.info(`Learning boost changed winner: "${oldWinner?.capabilityId ?? 'none'}" → "${newWinner.capabilityId}"`)
+      return {
+        ...matchResult,
+        capability:      newCap,
+        confidence:      newWinner.score,
+        intent:          newCap ? resolverToIntent(newCap) : 'out_of_scope',
+        extractedParams: newParams,
+        candidates:      boosted.map(c => ({ ...c, matched: c.capabilityId === newWinner.capabilityId })),
+        reasoning:       `Matched "${newWinner.capabilityId}" via learning boost (score: ${newWinner.score})`,
+      }
+    }
+
+    return {
+      ...matchResult,
+      confidence: newWinner.score,
+      candidates: boosted.map(c => ({ ...c, matched: c.capabilityId === (oldWinner?.capabilityId ?? '') })),
+    }
+  }
+  
 
   /**
    * Applies learning boost to match candidates based on historical usage.
@@ -755,11 +731,7 @@ export class CapmanEngine {
     if (!this.learning) return candidates
 
     // Use cached stats — rebuilt only when new entries recorded
-    if (this.statsInvalidated) {
-      this.cachedStats      = await this.learning.getStats()
-      this.statsInvalidated = false
-    }
-    const stats = this.cachedStats
+    const stats = await this.learning.getStats()
     if (!stats || Object.keys(stats.index).length === 0) return candidates
 
     const qWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOPWORDS.has(w))
@@ -819,6 +791,5 @@ export class CapmanEngine {
       resolvedVia,
       timestamp:       new Date().toISOString(),
     })
-    this.statsInvalidated = true
   }
 }

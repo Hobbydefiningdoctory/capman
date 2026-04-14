@@ -232,6 +232,15 @@ async function resolveApi(
   }
 }
 
+function validateNavParam(key: string, value: string): void {
+  if (!/^[a-zA-Z0-9_\-]+$/.test(value)) {
+    throw new Error(
+      `Nav param "${key}" contains invalid characters: "${value}". ` +
+      `Only alphanumeric, hyphens, and underscores are allowed.`
+    )
+  }
+}
+
 function resolveNav(
   resolver: NavResolver | Omit<NavResolver, 'type'>,
   params: Record<string, unknown>
@@ -239,7 +248,9 @@ function resolveNav(
   let destination = resolver.destination
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined) continue
-    destination = destination.replace(`{${key}}`, encodeURIComponent(String(value)))
+    const str = String(value)
+    validateNavParam(key, str)
+    destination = destination.replace(`{${key}}`, encodeURIComponent(str))
   }
   return { success: true, resolverType: 'nav', navTarget: destination }
 }

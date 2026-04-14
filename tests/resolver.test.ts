@@ -401,10 +401,21 @@ describe('resolve()', () => {
       const matchResult = match('Take me to dashboard', manifest)
       const result = await resolve(
         matchResult,
-        { destination: 'my dashboard' },
+        { destination: 'my-dashboard' },
         { dryRun: true }
       )
-      expect(result.navTarget).toBe('/my%20dashboard')
+      expect(result.navTarget).toBe('/my-dashboard')
+    })
+
+    it('rejects nav param values with invalid characters', async () => {
+      const matchResult = match('Take me to dashboard', manifest)
+      const result = await resolve(
+        matchResult,
+        { destination: '../../admin' },
+        { dryRun: true }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('invalid characters')
     })
   })
 

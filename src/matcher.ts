@@ -139,7 +139,15 @@ export function extractParams(query: string, cap: Capability): Record<string, st
     if (!extracted && param.required) {
       const words = query.trim().split(/\s+/)
       const meaningful = words.filter(w => !STOPWORDS.has(w.toLowerCase()))
-      extracted = meaningful[meaningful.length - 1] ?? null
+      const candidate = meaningful[meaningful.length - 1] ?? null
+      // Only use fallback if candidate looks like an identifier — not a generic noun or verb
+      if (
+        candidate &&
+        /^[a-zA-Z0-9_-]{2,}$/.test(candidate) &&
+        !/^(all|new|latest|recent|current|list|get|show|find|fetch|give|open|my|their|your)$/i.test(candidate)
+      ) {
+        extracted = candidate
+      }
     }
 
     result[param.name] = extracted

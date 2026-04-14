@@ -4,6 +4,69 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.0] — 2026-04-15
+### Added
+- Learning index is now incremental — `record()` updates the index in O(w) per entry instead of rebuilding from scratch on every `getStats()` call. Eliminates O(n) CPU spike on every query under load.
+- `getIndex()` method on both `FileLearningStore` and `MemoryLearningStore` — returns live keyword index directly in O(1)
+- `extractParams` exported from public API — enables direct param extraction without going through `match()`
+- `resolverToIntent()` exported from public API — converts a capability's resolver type to its intent string
+- `STOPWORDS` exported from public API — same set used by matcher and learning index
+
+### Fixed
+
+**Security:**
+- Auth bypass via cache key — non-public capabilities are no longer cached. Previously User A's cached match for a `user_owned` capability could be served to User B before privacy checks ran
+- Arbitrary file write via CLI — `--out` and `--config-out` flags in `capman generate` now validated against working directory. Path traversal attempts exit with a clear error
+- Prompt injection hardening — system instructions now come before user data in `matchWithLLM` prompt, with explicit `USER_QUERY_START/END` delimiters
+
+**Learning system:**
+- Boost feedback loop — learning now records the pre-boost match result, not the post-boost winner
+- Boosted winner no longer gets empty `extractedParams` — params extracted directly via `extractParams()`
+- Cache now stores post-boost result — previously cache/live path could return different capabilities
+- OOS results can no longer be promoted via boost alone — boost skipped when all candidates score 0
+- Tied boost scores now preserve original winner
+- Learning index no longer includes stopwords — words like `"show"`, `"get"`, `"for"` were inflating unrelated scores
+- Boost logic deduplicated — `ask()` and `explain()` share `applyBoostToMatchResult()`
+
+**Security — logs:**
+- PII no longer logged at debug level — param values and `auth.userId` redacted as `[REDACTED]`
+
+**Cache:**
+- `FileCache` now has a 2048-entry cap with oldest-first eviction — previously grew without bound
+
+**Resolver:**
+- Nav params validated against allowlist before substitution — prevents open redirect via encoded path separators
+
+**Matcher:**
+- `JSON.parse` failures no longer trigger the circuit breaker — prefixed `LLM_PARSE_ERROR` and treated separately from network failures
+- Required param fallback rejects generic nouns — only accepts identifier-shaped last words
+
+**Engine:**
+- Version compatibility warning now uses `console.warn` — was using `logger.warn` suppressed by default `'silent'` log level
+- Version warning wording softened — advisory not mandatory
+- Concurrency limitation documented in `EngineOptions` JSDoc and README
+
+### Tests
+- 80 tests passing (up from 73)
+- Boost tests now use `mode: 'balanced'` — previously used `mode: 'cheap'` making them vacuous
+- Nav open redirect test added
+
+---
+
+## [0.4.5] — 2026-04-08
+### Added
+- Learning index wired into keyword matcher — boost up to +15 points for historically matched capabilities
+- Manifest version compatibility check — warns when manifest `major.minor` differs from engine version
+
+### Fixed
+- Dead logger warning condition in `matchWithLLM` corrected
+- Empty string `userId` no longer injected into session params
+- `resolverToIntent()` exported and reused in engine
+- Learning boost skipped in `cheap` mode
+- Boost logic applied consistently in both `ask()` and `explain()`
+
+---
+
 ## [0.4.4] — 2026-04-05
 ### Fixed
 - Rate limit double-counting on LLM failure — `recordLLMFailure()` no longer increments `llmCallsThisMinute` (slot already reserved by `checkLLMAllowed()`)

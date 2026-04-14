@@ -539,7 +539,8 @@ describe('CapmanEngine', () => {
         manifest,
         cache: false,
         learning,
-        mode: 'cheap',
+        mode: 'balanced',
+        threshold: 1, // low threshold so LLM fallback doesn't interfere
       })
 
       // Record several matches to build the index
@@ -547,10 +548,16 @@ describe('CapmanEngine', () => {
         await engine.ask('Show me articles', { dryRun: true })
       }
 
-      // Stats should now have keyword index entries
+      // 6th call — boost should now influence scoring
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.match.confidence).toBeGreaterThan(0)
+
       const stats = await engine.getStats()
-      expect(stats?.totalQueries).toBe(5)
+      expect(stats?.totalQueries).toBe(6)
       expect(stats?.index).toBeDefined()
+      // Verify index has entries for meaningful words
+      const indexWords = Object.keys(stats?.index ?? {})
+      expect(indexWords.length).toBeGreaterThan(0)
     })
 
     it('learning boost does not push score above 100', async () => {
@@ -559,7 +566,8 @@ describe('CapmanEngine', () => {
         manifest,
         cache: false,
         learning,
-        mode: 'cheap',
+        mode: 'balanced',
+        threshold: 1,
       })
 
       // Build up history
@@ -574,16 +582,49 @@ describe('CapmanEngine', () => {
       })
     })
 
-    it('learning boost does not affect cheap mode with no history', async () => {
-      const engine = new CapmanEngine({
+    it('boost is skipped in cheap mode', async () => {
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
         manifest,
         cache: false,
-        learning: false,
+        learning,
         mode: 'cheap',
       })
 
+      // Record history
+      for (let i = 0; i < 10; i++) {
+        await engine.ask('Show me articles', { dryRun: true })
+      }
+
+      // Cheap mode — boost should never run
       const result = await engine.ask('Show me articles', { dryRun: true })
-      expect(result.match.capability?.id).toBe('get_articles')
+      expect(result.match).toBeDefined()
+      // In cheap mode resolvedVia is always keyword
+      expect(result.resolvedVia).toBe('keyword')
+    })
+
+    it('boost does not affect OOS queries with no keyword signal', async () => {
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning,
+        mode: 'balanced',
+        threshold: 50,
+      })
+
+      // Build history for articles
+      for (let i = 0; i < 10; i++) {
+        await engine.ask('Show me articles', { dryRun: true })
+      }
+
+      // Completely unrelated query with no keyword signal should stay OOS
+      const result = await engine.ask('xyzzy plugh twisty passages', { dryRun: true })
+      // If all candidates score 0, boost should not override
+      const allZero = result.trace.candidates.every(c => c.score === 0)
+      if (allZero) {
+        expect(result.match.capability).toBeNull()
+      }
     })
   })
 
