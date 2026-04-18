@@ -92,9 +92,10 @@ function computeTopCapabilities(
 // ─── File Learning Store ──────────────────────────────────────────────────────
 
 export class FileLearningStore implements LearningStore {
-  private filePath: string
-  private entries:  LearningEntry[] = []
-  private loaded:   boolean         = false
+  private filePath:  string
+  private entries:   LearningEntry[] = []
+  private loaded:    boolean         = false
+  private saveQueue: Promise<void>   = Promise.resolve()
 
   // ── Incremental index — updated in record(), not rebuilt in getStats() ────
   private index:        Record<string, Record<string, number>> = {}
@@ -125,6 +126,36 @@ export class FileLearningStore implements LearningStore {
     }
   }
 
+  private subtractFromIndex(entry: LearningEntry): void {
+    if (!entry.capabilityId) {
+      this.statsCounter.outOfScope    = Math.max(0, this.statsCounter.outOfScope - 1)
+      this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
+      if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
+      if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
+      return
+    }
+
+    this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
+    if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
+    if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
+
+    const words = entry.query.toLowerCase()
+      .split(/\W+/)
+      .filter(w => w.length > 2 && !STOPWORDS.has(w))
+
+    for (const word of words) {
+      if (!this.index[word]) continue
+      this.index[word][entry.capabilityId] =
+        (this.index[word][entry.capabilityId] ?? 1) - 1
+      if (this.index[word][entry.capabilityId] <= 0) {
+        delete this.index[word][entry.capabilityId]
+      }
+      if (Object.keys(this.index[word]).length === 0) {
+        delete this.index[word]
+      }
+    }
+  }
+
   private rebuildIndex(): void {
     this.index        = {}
     this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
@@ -151,7 +182,12 @@ export class FileLearningStore implements LearningStore {
     this.loaded = true
   }
 
-  private async save(): Promise<void> {
+  private save(): Promise<void> {
+    this.saveQueue = this.saveQueue.then(() => this._doSave())
+    return this.saveQueue
+  }
+
+  private async _doSave(): Promise<void> {
     try {
       const dir = path.dirname(this.filePath)
       await fs.promises.mkdir(dir, { recursive: true })
@@ -162,8 +198,8 @@ export class FileLearningStore implements LearningStore {
           updatedAt: new Date().toISOString(),
         }, null, 2)
       )
-    } catch {
-      logger.warn(`Failed to save learning store to ${this.filePath}`)
+    } catch (err) {
+      logger.warn(`Failed to save learning store to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
@@ -173,10 +209,12 @@ export class FileLearningStore implements LearningStore {
     this.updateIndex(entry)
 
     if (this.entries.length > MAX_LEARNING_ENTRIES) {
-      const excess = this.entries.length - MAX_LEARNING_ENTRIES
-      this.entries.splice(0, excess)
-      // Rebuild index after pruning — pruned entries may have affected counts
-      this.rebuildIndex()
+      const excess   = this.entries.length - MAX_LEARNING_ENTRIES
+      const pruned   = this.entries.splice(0, excess)
+      // Subtract pruned entries from index — O(pruned × w) instead of O(n × w) full rebuild
+      for (const entry of pruned) {
+        this.subtractFromIndex(entry)
+      }
       logger.debug(`Learning store pruned ${excess} oldest entries (cap: ${MAX_LEARNING_ENTRIES})`)
     }
     await this.save()
@@ -184,12 +222,12 @@ export class FileLearningStore implements LearningStore {
 
   async getStats(): Promise<KeywordStats> {
     await this.load()
-    return { ...this.statsCounter, index: this.index }
+    return { ...this.statsCounter, index: structuredClone(this.index) }
   }
 
   async getIndex(): Promise<Record<string, Record<string, number>>> {
     await this.load()
-    return this.index
+    return structuredClone(this.index)
   }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
@@ -199,6 +237,8 @@ export class FileLearningStore implements LearningStore {
 
   async clear(): Promise<void> {
     this.entries = []
+    this.index        = {}
+    this.statsCounter = {totalQueries: 0, llmQueries: 0, cacheHits: 0,outOfScope: 0 }
     await this.save()
   }
 }
@@ -216,17 +256,20 @@ export class FileLearningStore implements LearningStore {
       this.entries.push(entry)
       this.updateIndex(entry)
       if (this.entries.length > MAX_LEARNING_ENTRIES) {
-        this.entries.splice(0, this.entries.length - MAX_LEARNING_ENTRIES)
-        this.rebuildIndex()
+        const excess = this.entries.length - MAX_LEARNING_ENTRIES
+        const pruned = this.entries.splice(0, excess)
+        for (const entry of pruned) {
+          this.subtractFromIndex(entry)
+        }
       }
     }
   
     async getStats(): Promise<KeywordStats> {
-      return { ...this.statsCounter, index: this.index }
+      return { ...this.statsCounter, index: structuredClone(this.index) }
     }
 
     async getIndex(): Promise<Record<string, Record<string, number>>> {
-      return this.index
+      return structuredClone(this.index)
     }
 
     private updateIndex(entry: LearningEntry): void {
@@ -247,6 +290,36 @@ export class FileLearningStore implements LearningStore {
       }
     }
 
+    private subtractFromIndex(entry: LearningEntry): void {
+      if (!entry.capabilityId) {
+        this.statsCounter.outOfScope    = Math.max(0, this.statsCounter.outOfScope - 1)
+        this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
+        if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
+        if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
+        return
+      }
+
+      this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
+      if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
+      if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
+
+      const words = entry.query.toLowerCase()
+        .split(/\W+/)
+        .filter(w => w.length > 2 && !STOPWORDS.has(w))
+
+      for (const word of words) {
+        if (!this.index[word]) continue
+        this.index[word][entry.capabilityId] =
+          (this.index[word][entry.capabilityId] ?? 1) - 1
+        if (this.index[word][entry.capabilityId] <= 0) {
+          delete this.index[word][entry.capabilityId]
+        }
+        if (Object.keys(this.index[word]).length === 0) {
+          delete this.index[word]
+        }
+      }
+    }
+
     private rebuildIndex(): void {
       this.index        = {}
       this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
@@ -261,6 +334,8 @@ export class FileLearningStore implements LearningStore {
 
   async clear(): Promise<void> {
     this.entries = []
+    this.index        = {}
+    this.statsCounter = {totalQueries: 0, llmQueries: 0, cacheHits: 0,outOfScope: 0 }
   }
 }
 

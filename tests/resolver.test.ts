@@ -450,6 +450,37 @@ describe('resolve()', () => {
       expect(result.apiCalls?.[0].url).not.toContain('//data')
       expect(result.apiCalls?.[0].url).toBe('https://api.test.com/users/{user_id}/data')
     })
+    it('does not leak session params into query string when not in path template', async () => {
+      const sessionConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [{
+          id: 'get_feed',
+          name: 'Get feed',
+          description: 'Fetch the activity feed for the current user.',
+          examples: ['get my feed'],
+          params: [
+            { name: 'user_id', description: 'User ID', required: true, source: 'session' }
+          ],
+          returns: ['feed'],
+          resolver: {
+            type: 'api',
+            // path has no {user_id} template — session param must NOT leak to QS
+            endpoints: [{ method: 'GET', path: '/feed' }],
+          },
+          privacy: { level: 'user_owned' },
+        }],
+      }
+      const m = generate(sessionConfig)
+      const matchResult = match('get my feed', m)
+      const result = await resolve(matchResult, {}, {
+        baseUrl: 'https://api.test.com',
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'user', userId: 'abc123' },
+      })
+      expect(result.apiCalls?.[0].url).toBe('https://api.test.com/feed')
+      expect(result.apiCalls?.[0].url).not.toContain('user_id')
+      expect(result.apiCalls?.[0].url).not.toContain('abc123')
+    })
   })
   
 

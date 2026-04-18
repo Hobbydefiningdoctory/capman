@@ -4,6 +4,32 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.1] — 2026-04-18
+### Fixed
+
+**Critical:**
+- `getStats()` and `getIndex()` now return deep clones of the internal index — callers can no longer corrupt the learning store by mutating the returned object
+- `FileCache` and `FileLearningStore` saves are now serialized through a promise queue — concurrent writes no longer silently drop entries via last-write-wins
+- `clear()` now resets the incremental index and stats counters in both stores — previously left stale boost data after clearing
+
+**High:**
+- Session params (`source: 'session'`) no longer leak into API query strings — only injected when the param name appears as a `{template}` in the path
+- `MemoryCache` and `FileCache` now use LRU eviction — previously used FIFO, evicting frequently-accessed entries ahead of cold ones
+- Tiebreak logic in boost corrected — `b.matched` now correctly preserves original winner on tied scores (was `a.matched`, only worked when winner was first in array)
+- LLM error logging now uses `err.message` instead of `${err}` — prevents potential API key exposure from SDK errors that embed auth headers in error objects
+
+**Medium:**
+- `rebuildIndex()` after pruning replaced with `subtractFromIndex()` — O(pruned × w) instead of O(n × w), avoids full index rebuild at the 10k entry cap
+- `ask()` and `explain()` matching dispatch unified into `_runMatch()` — eliminates 60 lines of duplicated mode-switching logic
+- Fallback param denylist extended — category nouns like `"orders"`, `"data"`, `"results"`, `"items"` no longer produce junk URLs
+- File write errors now include the actual error message in the log — was silently swallowing `ENOSPC`, `EACCES` etc.
+- `loadSpec()` fetch in parser now has a 10s timeout with `AbortController` — previously hung indefinitely on unresponsive URLs
+- Cache entries now support optional TTL via `cacheTtlMs` in `EngineOptions` — stale entries from removed capabilities are expired on read
+- `matchWithLLM` JSDoc documents the manifest injection surface — capability descriptions and examples are verbatim in the LLM prompt
+
+### Tests
+- 82 tests passing
+
 ## [0.5.0] — 2026-04-15
 ### Added
 - Learning index is now incremental — `record()` updates the index in O(w) per entry instead of rebuilding from scratch on every `getStats()` call. Eliminates O(n) CPU spike on every query under load.

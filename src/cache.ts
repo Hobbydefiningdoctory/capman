@@ -15,7 +15,7 @@ export interface CacheEntry {
 // ─── Cache Interface ──────────────────────────────────────────────────────────
 
 export interface CacheStore {
-  get(key: string): Promise<CacheEntry | null>
+  get(key: string, ttlMs?: number): Promise<CacheEntry | null>
   set(key: string, result: MatchResult): Promise<void>
   clear(): Promise<void>
   size(): Promise<number>
@@ -56,10 +56,17 @@ const MEMORY_CACHE_MAX = 512
 export class MemoryCache implements CacheStore {
   private store = new Map<string, CacheEntry>()
 
-  async get(key: string): Promise<CacheEntry | null> {
+  async get(key: string, ttlMs?: number): Promise<CacheEntry | null> {
     const entry = this.store.get(key)
     if (entry) {
+      if (ttlMs && Date.now() - new Date(entry.cachedAt).getTime() > ttlMs) {
+        this.store.delete(key)
+        logger.debug(`Cache entry expired (memory): "${key}"`)
+        return null
+      }
       entry.hits++
+      this.store.delete(key)
+      this.store.set(key, entry)
       logger.debug(`Cache hit (memory): "${key}"`)
       return entry
     }
@@ -90,9 +97,10 @@ export class MemoryCache implements CacheStore {
 const FILE_CACHE_MAX = 2048
 
 export class FileCache implements CacheStore {
-  private filePath: string
-  private store: Map<string, CacheEntry> = new Map()
-  private loaded = false
+  private filePath:  string
+  private store:     Map<string, CacheEntry> = new Map()
+  private loaded:    boolean                 = false
+  private saveQueue: Promise<void>           = Promise.resolve()
 
   constructor(filePath = '.capman/cache.json') {
     this.filePath = path.resolve(process.cwd(), filePath)
@@ -116,7 +124,12 @@ export class FileCache implements CacheStore {
     this.loaded = true
   }
 
-  private async save(): Promise<void> {
+  private save(): Promise<void> {
+    this.saveQueue = this.saveQueue.then(() => this._doSave())
+    return this.saveQueue
+  }
+
+  private async _doSave(): Promise<void> {
     try {
       const dir = path.dirname(this.filePath)
       await fs.promises.mkdir(dir, { recursive: true })
@@ -124,20 +137,28 @@ export class FileCache implements CacheStore {
         this.filePath,
         JSON.stringify(Object.fromEntries(this.store), null, 2)
       )
-    } catch {
-      logger.warn(`Failed to save file cache to ${this.filePath}`)
+    } catch (err) {
+      logger.warn(`Failed to save file cache to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-  async get(key: string): Promise<CacheEntry | null> {
+  async get(key: string, ttlMs?: number): Promise<CacheEntry | null> {
     await this.load()
     const entry = this.store.get(key)
     if (entry) {
+      if (ttlMs && Date.now() - new Date(entry.cachedAt).getTime() > ttlMs) {
+        this.store.delete(key)
+        await this.save()
+        logger.debug(`Cache entry expired (file): "${key}"`)
+        return null
+      }
       entry.hits++
+      this.store.delete(key)
+      this.store.set(key, entry)
       logger.debug(`Cache hit (file): "${key}"`)
-      return entry
+      await this.save()
     }
-    return null
+    return entry ?? null
   }
 
   async set(key: string, result: MatchResult): Promise<void> {
@@ -181,13 +202,13 @@ export class ComboCache implements CacheStore {
     this.file   = new FileCache(filePath)
   }
 
-  async get(key: string): Promise<CacheEntry | null> {
-    const memHit = await this.memory.get(key)
+  async get(key: string, ttlMs?: number): Promise<CacheEntry | null> {
+    const memHit = await this.memory.get(key, ttlMs)
     if (memHit) return memHit
-    const fileHit = await this.file.get(key)
+
+    const fileHit = await this.file.get(key, ttlMs)
     if (fileHit) {
       await this.memory.set(key, fileHit.result)
-      logger.debug(`Cache promoted to memory: "${key}"`)
       return fileHit
     }
     return null

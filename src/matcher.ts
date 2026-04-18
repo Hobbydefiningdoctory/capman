@@ -136,19 +136,20 @@ export function extractParams(query: string, cap: Capability): Record<string, st
     }
 
     // Fallback — only for required params; optional params stay null if no keyword matched
-    if (!extracted && param.required) {
-      const words = query.trim().split(/\s+/)
-      const meaningful = words.filter(w => !STOPWORDS.has(w.toLowerCase()))
-      const candidate = meaningful[meaningful.length - 1] ?? null
-      // Only use fallback if candidate looks like an identifier — not a generic noun or verb
-      if (
-        candidate &&
-        /^[a-zA-Z0-9_-]{2,}$/.test(candidate) &&
-        !/^(all|new|latest|recent|current|list|get|show|find|fetch|give|open|my|their|your)$/i.test(candidate)
-      ) {
-        extracted = candidate
-      }
+  if (!extracted && param.required) {
+    const words = query.trim().split(/\s+/)
+    const meaningful = words.filter(w => !STOPWORDS.has(w.toLowerCase()))
+    const candidate = meaningful[meaningful.length - 1] ?? null
+    // Only use fallback if candidate looks like an identifier — not a generic noun, verb,
+    // or category word that would produce junk URLs like /orders/orders or /users/data
+    if (
+      candidate &&
+      /^[a-zA-Z0-9_-]{2,}$/.test(candidate) &&
+      !/^(all|new|latest|recent|current|list|get|show|find|fetch|give|open|my|their|your|orders|order|items|item|data|results|result|records|record|entries|entry|users|user|products|product|details|info|summary|history|status|feed|content|files|file|documents|document)$/i.test(candidate)
+    ) {
+      extracted = candidate
     }
+  }
 
     result[param.name] = extracted
   }
@@ -225,6 +226,17 @@ export interface LLMMatcherOptions {
   llm: (prompt: string) => Promise<string>
 }
 
+/**
+ * Matches a query to a capability using an LLM.
+ *
+ * ⚠️  SECURITY NOTE: Capability `description` and `examples` fields from the
+ * manifest are injected verbatim into the LLM prompt (system portion).
+ * In a solo deployment with a developer-controlled manifest this is safe.
+ * If your manifest is generated from third-party OpenAPI specs, user-controlled
+ * sources, or any external input, sanitize `description` and `examples` fields
+ * before passing the manifest to this function — adversarial content in those
+ * fields can influence LLM routing decisions.
+ */
 export async function matchWithLLM(
   query: string,
   manifest: Manifest,

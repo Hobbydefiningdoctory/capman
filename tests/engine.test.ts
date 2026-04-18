@@ -124,8 +124,36 @@ describe('CapmanEngine', () => {
       const memHit = await combo['memory'].get('Show me articles')
       expect(memHit).not.toBeNull()
     })
-  })
 
+    it('LRU eviction moves accessed entries to most-recently-used position', async () => {
+      const cache = new MemoryCache()
+
+      const fakeResult = {
+        capability: null,
+        confidence: 0,
+        intent: 'out_of_scope' as const,
+        extractedParams: {},
+        reasoning: 'test',
+        candidates: [],
+      }
+
+      // Fill cache to max capacity (512) then add one more to trigger eviction
+      for (let i = 0; i < 512; i++) {
+        await cache.set(`query-${i}`, fakeResult)
+      }
+
+      // Access query-0 — makes it most recently used
+      await cache.get('query-0')
+
+      // Add one more — triggers eviction of least recently used (query-1, not query-0)
+      await cache.set('query-512', fakeResult)
+
+      expect(await cache.get('query-0')).not.toBeNull()  // recently accessed — stays
+      expect(await cache.get('query-1')).toBeNull()       // LRU — evicted
+      expect(await cache.get('query-512')).not.toBeNull() // just added — stays
+    })
+  })
+  
   describe('learning', () => {
     it('records queries to learning store', async () => {
       const learning = new MemoryLearningStore()

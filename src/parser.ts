@@ -90,7 +90,20 @@ async function loadSpec(source: string): Promise<OpenAPISpec> {
   // URL
   if (source.startsWith('http://') || source.startsWith('https://')) {
     logger.info(`Fetching OpenAPI spec from: ${source}`)
-    const res = await fetch(source)
+    const controller = new AbortController()
+    const timer      = setTimeout(() => controller.abort(), 10_000)
+      // eslint-disable-next-line prefer-const
+      let res: Awaited<ReturnType<typeof fetch>>
+      try {
+        res = await fetch(source, { signal: controller.signal })
+      clearTimeout(timer)
+    } catch (err) {
+      clearTimeout(timer)
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error(`Timed out fetching spec from ${source} (10s limit)`)
+      }
+      throw err
+    }
     if (!res.ok) throw new Error(`Failed to fetch spec: ${res.status} ${res.statusText}`)
     const text = await res.text()
     return parseSpecText(text, source)

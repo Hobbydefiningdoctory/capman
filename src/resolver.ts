@@ -87,11 +87,19 @@ export async function resolve(
   }
 
   // ── Session param injection ───────────────────────────────────────────────
-  // Inject auth.userId into any params marked as source: 'session'
+  // Inject auth.userId into params marked as source: 'session'
+  // Session params are only injected if they appear as {template} in the path —
+  // they must never leak into the query string as ?user_id=xyz
   const enrichedParams = { ...params }
   if (options.auth?.userId !== undefined && options.auth.userId !== '') {
+    const resolver = capability.resolver
+    const pathTemplate =
+      resolver.type === 'api'    ? resolver.endpoints.map(e => e.path).join('') :
+      resolver.type === 'hybrid' ? resolver.api.endpoints.map(e => e.path).join('') :
+      resolver.type === 'nav'    ? resolver.destination : ''
+
     for (const param of capability.params) {
-      if (param.source === 'session') {
+      if (param.source === 'session' && pathTemplate.includes(`{${param.name}}`)) {
         enrichedParams[param.name] = options.auth.userId!
         logger.debug(`Injected session param "${param.name}" (value redacted)`)
       }

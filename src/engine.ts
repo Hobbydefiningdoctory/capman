@@ -56,6 +56,21 @@ export interface EngineOptions {
   headers?: Record<string, string>
   /** Confidence threshold for keyword matcher (default: 50) */
   threshold?: number
+
+  /**
+   * Optional TTL for cache entries in milliseconds.
+   * Entries older than this are treated as misses and evicted on read.
+   * Default: no expiry.
+   *
+   * Useful when capabilities are frequently updated or removed — ensures
+   * stale entries don't persist indefinitely after a manifest change.
+   *
+   * @example
+   * // Expire cache entries after 1 hour
+   * new CapmanEngine({ manifest, cacheTtlMs: 60 * 60 * 1000 })
+   */
+  cacheTtlMs?: number
+  
   /**
    * Maximum LLM calls per minute in balanced/accurate mode.
    * After limit is hit, falls back to keyword result.
@@ -107,6 +122,7 @@ export class CapmanEngine {
   private auth?:     AuthContext
   private headers?:  Record<string, string>
   private threshold: number
+  private cacheTtlMs: number | null
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -129,6 +145,7 @@ export class CapmanEngine {
     this.auth      = options.auth
     this.headers   = options.headers
     this.threshold = options.threshold ?? 50
+    this.cacheTtlMs = options.cacheTtlMs ?? null
     this.maxLLMCallsPerMinute       = options.maxLLMCallsPerMinute       ?? 60
     this.llmCooldownMs              = options.llmCooldownMs              ?? 0
     this.llmCircuitBreakerThreshold = options.llmCircuitBreakerThreshold ?? 3
@@ -175,13 +192,12 @@ export class CapmanEngine {
   async ask(query: string, overrides: Partial<ResolveOptions> = {}): Promise<EngineResult> {
     const start = Date.now()
     const steps: TraceStep[] = []
-    let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
 
     // ── Step 1: Check cache ──────────────────────────────────────────────────
     const cacheStart = Date.now()
     if (this.cache) {
       const queryKey = normalizeQuery(query)
-      const cached = await this.cache.get(queryKey)
+      const cached = await this.cache.get(queryKey, this.cacheTtlMs ?? undefined)
       if (cached) {
         steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
         logger.info(`Cache hit for: "${query}"`)
@@ -214,85 +230,7 @@ export class CapmanEngine {
     }
 
     // ── Step 2: Match ────────────────────────────────────────────────────────
-    let matchResult: MatchResult
-
-    switch (this.mode) {
-      case 'cheap': {
-        const t = Date.now()
-        matchResult = _match(query, this.manifest)
-        steps.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
-        break
-      }
-
-      case 'accurate': {
-        if (this.llm) {
-          const skipReason = this.checkLLMAllowed()
-          if (skipReason) {
-            logger.warn(`LLM skipped — ${skipReason} — falling back to keyword`)
-            const t = Date.now()
-            matchResult = _match(query, this.manifest)
-            steps.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: `llm skipped: ${skipReason}` })
-          } else {
-            const t = Date.now()
-            try {
-              matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
-              this.recordLLMSuccess()
-              resolvedVia = 'llm'
-              steps.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
-              } catch (err) {
-              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
-              if (!isParseError) this.recordLLMFailure()
-              logger.warn(`LLM call failed — falling back to keyword: ${err}`)
-              const t2 = Date.now()
-              matchResult = _match(query, this.manifest)
-              steps.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t, detail: String(err) })
-              steps.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t2, detail: 'fallback after llm failure' })
-            }
-          }
-        } else {
-          logger.warn('accurate mode requires llm — falling back to keyword')
-          const t = Date.now()
-          matchResult = _match(query, this.manifest)
-          steps.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: 'llm not provided, used keyword' })
-        }
-        break
-      }
-        
-
-      case 'balanced':
-      default: {
-      const t1 = Date.now()
-      const keywordResult = _match(query, this.manifest)
-      steps.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t1, detail: `confidence: ${keywordResult.confidence}%` })
-
-      if (keywordResult.confidence >= this.threshold || !this.llm) {
-        matchResult = keywordResult
-      } else {
-        const skipReason = this.checkLLMAllowed()
-        if (skipReason) {
-          logger.warn(`LLM skipped — ${skipReason}`)
-          steps.push({ type: 'llm_match', status: 'skip', durationMs: 0, detail: skipReason })
-          matchResult = keywordResult
-        } else {
-          logger.info(`Low confidence (${keywordResult.confidence}%) — escalating to LLM`)
-          const t2 = Date.now()
-          try {
-            matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
-            this.recordLLMSuccess()
-            resolvedVia = 'llm'
-            steps.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
-            } catch (err) {
-            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
-            if (!isParseError) this.recordLLMFailure()
-            logger.warn(`LLM call failed — falling back to keyword: ${err}`)
-            steps.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t2, detail: String(err) })
-            matchResult = keywordResult
-          }
-        }
-      }
-      break
-    }
-    }
+    let { matchResult, resolvedVia } = await this._runMatch(query, steps)
 
     const preBoostMatchResult = matchResult  // kept for learning recording only — prevents feedback loop
 
@@ -427,58 +365,9 @@ export class CapmanEngine {
   async explain(query: string): Promise<ExplainResult> {
     const start = Date.now()
 
-    // ── Match — mirrors ask() logic including rate limiting ───────────────────
-    let matchResult: MatchResult
-    let resolvedVia: ExplainResult['resolvedVia'] = 'keyword'
-
-    if (this.mode === 'accurate') {
-      if (this.llm) {
-        const skipReason = this.checkLLMAllowed()
-        if (skipReason) {
-          logger.warn(`explain(): LLM skipped — ${skipReason} — falling back to keyword`)
-          matchResult = _match(query, this.manifest)
-        } else {
-          try {
-            matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
-            this.recordLLMSuccess()
-            resolvedVia = 'llm'
-            } catch (err) {
-            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
-            if (!isParseError) this.recordLLMFailure()
-            logger.warn(`LLM call failed — falling back to keyword: ${err}`)
-            matchResult = _match(query, this.manifest)
-          }
-        }
-      } else {
-        matchResult = _match(query, this.manifest)
-      }
-    } else if (this.mode === 'balanced' && this.llm) {
-      // Keyword first — escalate to LLM if low confidence (same as ask())
-      const keywordResult = _match(query, this.manifest)
-      if (keywordResult.confidence >= this.threshold) {
-        matchResult = keywordResult
-      } else {
-        const skipReason = this.checkLLMAllowed()
-        if (skipReason) {
-          logger.warn(`explain(): LLM skipped — ${skipReason}`)
-          matchResult = keywordResult
-        } else {
-          try {
-            matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
-            this.recordLLMSuccess()
-            resolvedVia = 'llm'
-            } catch (err) {
-            const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
-            if (!isParseError) this.recordLLMFailure()
-            logger.warn(`LLM call failed — falling back to keyword: ${err}`)
-            matchResult = keywordResult
-          }
-        }
-      }
-    } else {
-      // cheap mode or no llm — keyword only
-      matchResult = _match(query, this.manifest)
-    }
+    // ── Match — shared with ask() via _runMatch() ─────────────────────────────
+    let { matchResult, resolvedVia: _resolvedVia } = await this._runMatch(query)
+    let resolvedVia = _resolvedVia as ExplainResult['resolvedVia']
 
     // ── Apply learning boost (same as ask()) ─────────────────────────────────
     matchResult = await this.applyBoostToMatchResult(query, matchResult)
@@ -673,6 +562,99 @@ export class CapmanEngine {
     }
   }
 
+
+  /**
+   * Runs the matching pipeline for a query — shared by ask() and explain().
+   * Handles cheap / balanced / accurate mode dispatch and LLM rate limiting.
+   * Returns the match result and which resolver was used.
+   */
+  private async _runMatch(
+    query: string,
+    steps?: TraceStep[]
+  ): Promise<{ matchResult: MatchResult; resolvedVia: EngineResult['resolvedVia'] }> {
+    let matchResult: MatchResult
+    let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
+
+    switch (this.mode) {
+      case 'cheap': {
+        const t = Date.now()
+        matchResult = _match(query, this.manifest)
+        steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
+        break
+      }
+
+      case 'accurate': {
+        if (this.llm) {
+          const skipReason = this.checkLLMAllowed()
+          if (skipReason) {
+            logger.warn(`LLM skipped — ${skipReason} — falling back to keyword`)
+            const t = Date.now()
+            matchResult = _match(query, this.manifest)
+            steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: `llm skipped: ${skipReason}` })
+          } else {
+            const t = Date.now()
+            try {
+              matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
+              this.recordLLMSuccess()
+              resolvedVia = 'llm'
+              steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
+            } catch (err) {
+              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+              if (!isParseError) this.recordLLMFailure()
+              logger.warn(`LLM call failed — falling back to keyword: ${err instanceof Error ? err.message : String(err)}`)
+              const t2 = Date.now()
+              matchResult = _match(query, this.manifest)
+              steps?.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t, detail: String(err) })
+              steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t2, detail: 'fallback after llm failure' })
+            }
+          }
+        } else {
+          logger.warn('accurate mode requires llm — falling back to keyword')
+          const t = Date.now()
+          matchResult = _match(query, this.manifest)
+          steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: 'llm not provided, used keyword' })
+        }
+        break
+      }
+
+      case 'balanced':
+      default: {
+        const t1 = Date.now()
+        const keywordResult = _match(query, this.manifest)
+        steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t1, detail: `confidence: ${keywordResult.confidence}%` })
+
+        if (keywordResult.confidence >= this.threshold || !this.llm) {
+          matchResult = keywordResult
+        } else {
+          const skipReason = this.checkLLMAllowed()
+          if (skipReason) {
+            logger.warn(`LLM skipped — ${skipReason}`)
+            steps?.push({ type: 'llm_match', status: 'skip', durationMs: 0, detail: skipReason })
+            matchResult = keywordResult
+          } else {
+            logger.info(`Low confidence (${keywordResult.confidence}%) — escalating to LLM`)
+            const t2 = Date.now()
+            try {
+              matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
+              this.recordLLMSuccess()
+              resolvedVia = 'llm'
+              steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
+            } catch (err) {
+              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+              if (!isParseError) this.recordLLMFailure()
+              logger.warn(`LLM call failed — falling back to keyword: ${err instanceof Error ? err.message : String(err)}`)
+              steps?.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t2, detail: String(err) })
+              matchResult = keywordResult
+            }
+          }
+        }
+        break
+      }
+    }
+
+    return { matchResult: matchResult!, resolvedVia }
+  }
+
   /**
    * Applies learning boost to a MatchResult and returns the updated result.
    * Shared by ask() and explain() to avoid logic divergence.
@@ -691,7 +673,7 @@ export class CapmanEngine {
 
     const newWinner = boosted.reduce((a, b) => {
       if (b.score > a.score) return b
-      if (b.score === a.score && a.matched) return a  // original winner wins ties
+      if (b.score === a.score && b.matched) return b  // original winner wins ties
       return a
     })
     const oldWinner = matchResult.candidates.find(c => c.matched)
