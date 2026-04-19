@@ -7,7 +7,7 @@ import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extra
 import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
-import type { MatchMode } from './index'
+import type { MatchMode } from './types'
 import { MemoryCache, normalizeQuery } from './cache'
 import { VERSION } from './version'
 
@@ -112,7 +112,9 @@ export interface EngineResult {
 
 // ─── CapmanEngine ─────────────────────────────────────────────────────────────
 
-export class CapmanEngine {
+  export class CapmanEngine {
+  /** Maximum allowed query length in characters. Queries exceeding this throw RangeError. */
+  static readonly MAX_QUERY_LENGTH = 1000
   private manifest:  Manifest
   private mode:      MatchMode
   private llm?:      LLMMatcherOptions['llm']
@@ -165,16 +167,16 @@ export class CapmanEngine {
 
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
     // ── Manifest version compatibility check ─────────────────────────────────
-    const manifestMajorMinor = options.manifest.version?.split('.').slice(0, 2).join('.')
-    const engineMajorMinor   = VERSION.split('.').slice(0, 2).join('.')
-    if (manifestMajorMinor && manifestMajorMinor !== engineMajorMinor) {
-      // Use console.warn directly — must be visible regardless of logger level
-      // Default log level is 'silent' so logger.warn would never be seen
-      console.warn(
-        `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
-        `different engine version than "${VERSION}". If you experience matching issues, ` +
-        `regenerate with: npx capman generate`
-      )
+    if (options.manifest.version) {
+      const [mMaj, mMin] = options.manifest.version.split('.').map(Number)
+      const [eMaj, eMin] = VERSION.split('.').map(Number)
+      if (mMaj !== eMaj || mMin !== eMin) {
+        console.warn(
+          `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
+          `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
+          `If you experience unexpected matching issues, regenerate with: npx capman generate`
+        )
+      }
     }
   }
 
@@ -189,7 +191,14 @@ export class CapmanEngine {
    * console.log(result.resolution.apiCalls)   // [{ url: '...', method: 'GET' }]
    * console.log(result.resolvedVia)           // 'keyword' | 'llm' | 'cache'
    */
-  async ask(query: string, overrides: Partial<ResolveOptions> = {}): Promise<EngineResult> {
+    async ask(query: string, overrides: Partial<ResolveOptions> = {}): Promise<EngineResult> {
+    if (!query || typeof query !== 'string') {
+      throw new TypeError('query must be a non-empty string')
+    }
+    if (query.length > CapmanEngine.MAX_QUERY_LENGTH) {
+      throw new RangeError(`query exceeds maximum length of ${CapmanEngine.MAX_QUERY_LENGTH} characters`)
+    }
+
     const start = Date.now()
     const steps: TraceStep[] = []
 
@@ -201,9 +210,22 @@ export class CapmanEngine {
       if (cached) {
         steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
         logger.info(`Cache hit for: "${query}"`)
+
+        // Re-extract params from the current query — never re-use cached params.
+        // Cached params belong to the original query (potentially from a different user).
+        // e.g. User A: "show orders for john" → cached with { customer: 'john' }
+        //      User B: "show orders for jane" → must get { customer: 'jane' }, not john's
+        const freshParams = cached.result.capability
+          ? extractParams(query, cached.result.capability)
+          : {}
+        const matchWithFreshParams: MatchResult = {
+          ...cached.result,
+          extractedParams: freshParams,
+        }
+
         const resolution = await _resolve(
-          cached.result,
-          cached.result.extractedParams as Record<string, unknown>,
+          matchWithFreshParams,
+          freshParams as Record<string, unknown>,
           this.resolveOptions(overrides)
         )
         const trace: ExecutionTrace = {
@@ -215,15 +237,16 @@ export class CapmanEngine {
           totalMs: Date.now() - start,
         }
         const result: EngineResult = {
-          match: cached.result,
+          match: matchWithFreshParams,
           resolution,
           resolvedVia: 'cache',
           durationMs: Date.now() - start,
           trace,
         }
-        await this.recordLearning(query, cached.result, 'cache')
+        await this.recordLearning(query, matchWithFreshParams, 'cache')
         return result
       }
+      
       steps.push({ type: 'cache_check', status: 'miss', durationMs: Date.now() - cacheStart })
     } else {
       steps.push({ type: 'cache_check', status: 'skip', durationMs: 0, detail: 'Cache disabled' })
@@ -362,7 +385,14 @@ export class CapmanEngine {
    * console.log(explanation.candidates)
    */
   
-  async explain(query: string): Promise<ExplainResult> {
+    async explain(query: string): Promise<ExplainResult> {
+    if (!query || typeof query !== 'string') {
+      throw new TypeError('query must be a non-empty string')
+    }
+    if (query.length > CapmanEngine.MAX_QUERY_LENGTH) {
+      throw new RangeError(`query exceeds maximum length of ${CapmanEngine.MAX_QUERY_LENGTH} characters`)
+    }
+
     const start = Date.now()
 
     // ── Match — shared with ask() via _runMatch() ─────────────────────────────
@@ -414,11 +444,16 @@ export class CapmanEngine {
     }
     reasoning.push(`Resolved via: ${resolvedVia}`)
     if (matchResult.extractedParams && Object.keys(matchResult.extractedParams).length) {
-      const params = Object.entries(matchResult.extractedParams)
+      const extracted = Object.entries(matchResult.extractedParams)
         .filter(([, v]) => v !== null)
         .map(([k, v]) => `${k}=${v}`)
         .join(', ')
-      if (params) reasoning.push(`Would extract params: ${params}`)
+      const session = matchResult.capability?.params
+        .filter(p => p.source === 'session')
+        .map(p => `${p.name}=[from auth]`)
+        .join(', ')
+      const parts = [extracted, session].filter(Boolean).join(', ')
+      if (parts) reasoning.push(`Would extract params: ${parts}`)
     }
 
     // ── Build wouldExecute ───────────────────────────────────────────────────
@@ -454,14 +489,14 @@ export class CapmanEngine {
           const endpoint = (cap.resolver as ApiResolver).endpoints[0]
           let path = endpoint.path
           for (const [k, v] of Object.entries(params)) {
-            if (v) path = path.replace(`{${k}}`, v)
+            if (v) path = path.replaceAll(`{${k}}`, v)
           }
           const base = this.baseUrl ?? ''
           action = `${endpoint.method} ${base}${path}`
         } else if (cap.resolver.type === 'nav') {
           let dest = (cap.resolver as NavResolver).destination
           for (const [k, v] of Object.entries(params)) {
-            if (v) dest = dest.replace(`{${k}}`, v)
+            if (v) dest = dest.replaceAll(`{${k}}`, v)
           }
           action = `navigate → ${dest}`
         } else if (cap.resolver.type === 'hybrid') {
@@ -469,11 +504,11 @@ export class CapmanEngine {
           const endpoint = hybrid.api.endpoints[0]
           let path = endpoint.path
           for (const [k, v] of Object.entries(params)) {
-            if (v) path = path.replace(`{${k}}`, v)
+            if (v) path = path.replaceAll(`{${k}}`, v)
           }
           let dest = hybrid.nav.destination
           for (const [k, v] of Object.entries(params)) {
-            if (v) dest = dest.replace(`{${k}}`, v)
+            if (v) dest = dest.replaceAll(`{${k}}`, v)
           }
           const base = this.baseUrl ?? ''
           action = `${endpoint.method} ${base}${path} + navigate → ${dest}`
@@ -597,6 +632,17 @@ export class CapmanEngine {
               matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
               this.recordLLMSuccess()
               resolvedVia = 'llm'
+              // Merge keyword scores into LLM candidates so boost has real signal for alternatives
+              const kwResult = _match(query, this.manifest)
+              matchResult = {
+                ...matchResult,
+                candidates: matchResult.candidates.map(c => ({
+                  ...c,
+                  score: c.matched
+                    ? c.score  // keep LLM confidence for winner
+                    : (kwResult.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
+                })),
+              }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {
               const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
@@ -638,6 +684,16 @@ export class CapmanEngine {
               matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
               this.recordLLMSuccess()
               resolvedVia = 'llm'
+              // keywordResult already computed above in balanced mode — merge scores
+              matchResult = {
+                ...matchResult,
+                candidates: matchResult.candidates.map(c => ({
+                  ...c,
+                  score: c.matched
+                    ? c.score
+                    : (keywordResult.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
+                })),
+              }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {
               const isParseError = String(err).startsWith('LLM_PARSE_ERROR')

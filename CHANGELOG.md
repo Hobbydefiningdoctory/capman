@@ -4,6 +4,35 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.2] — 2026-04-20
+### Fixed
+
+**Critical:**
+- `[from_session]` sentinel string replaced with `null` in `extractParams()` — was leaking literal `[from_session]` into API URLs and POST request bodies
+- `resolveApi()` POST body now strips null params — session values that weren't injected no longer appear as `null` in request bodies
+- `FileCache` and `FileLearningStore` constructors now validate path stays within working directory — prevents path traversal via caller-supplied `filePath`
+- `FileCache.get()` no longer writes to disk on every cache hit — was triggering full JSON rewrite per request under any real load
+- Cache hits now re-extract params from the current query — previously re-served `extractedParams` from the original cached query, leaking one user's param values to another
+
+**High:**
+- Query length and type guards added to `ask()` and `explain()` — throws `TypeError` for non-string input, `RangeError` for queries over 1000 characters
+- `FileCache.load()` now normalizes keys on read — prevents duplicate entries from manual edits or older versions accumulating silently
+- `matchWithLLM` now returns all capabilities as candidates with keyword scores as baseline — previously returned only the LLM winner, making learning boost unable to surface alternatives
+- Manifest descriptions truncated to 200 chars and examples to 100 chars in LLM prompt — prevents context window overflow and reduces injection surface from third-party OpenAPI specs
+- Zod schema now enforces `description` max 500 chars and `examples` max 200 chars per entry
+- Template substitution uses `replaceAll` — `String.replace()` only replaced the first occurrence of a `{param}` placeholder, leaving duplicates unsubstituted
+- TypeScript target bumped to ES2021 — enables `replaceAll`, aligns with minimum supported Node version
+
+**Medium:**
+- `MemoryLearningStore.rebuildIndex()` dead code removed — was defined but unreachable since `MemoryLearningStore` has no `load()` method
+- `loadSpec()` in parser now uses `fs.promises.readFile` — was blocking event loop with synchronous `readFileSync` in an async function
+- Raw query text no longer stored verbatim in learning entries — tokenized to keywords only before persisting, eliminates PII (emails, names, IDs) from `.capman/learning.json`
+- `resolveApi()` JSDoc documents parallel execution and no-rollback behavior for multi-endpoint capabilities
+- Version comparison now parses major/minor as integers — string comparison (`"0.10" > "0.9"`) is lexicographic and incorrect
+
+### Tests
+- 87 tests passing
+
 ## [0.5.1] — 2026-04-18
 ### Fixed
 

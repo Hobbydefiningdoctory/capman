@@ -61,8 +61,10 @@ const CapabilitySchema = z.object({
   id:          z.string().min(1, 'capability id is required')
                .regex(/^[a-z0-9_]+$/, 'id must be snake_case (lowercase, numbers, underscores only)'),
   name:        z.string().min(1, 'capability name is required'),
-  description: z.string().min(10, 'description must be at least 10 characters for accurate matching'),
-  examples:    z.array(z.string()).optional(),
+  description: z.string()
+  .min(10, 'description must be at least 10 characters for accurate matching')
+  .max(500, 'description must be 500 characters or fewer'),
+  examples:    z.array(z.string().max(200, 'each example must be 200 characters or fewer')).optional(),
   params:      z.array(CapabilityParamSchema),
   returns:     z.array(z.string()),
   resolver:    ResolverSchema,

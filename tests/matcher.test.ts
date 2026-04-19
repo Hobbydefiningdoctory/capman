@@ -113,7 +113,7 @@ describe('match()', () => {
       }
       const m = generate(sessionConfig)
       const result = match('show my data', m)
-      expect(result.extractedParams.user_id).toBe('[from_session]')
+      expect(result.extractedParams.user_id).toBeNull() // session params return null — injected by resolver
     })
   })
 

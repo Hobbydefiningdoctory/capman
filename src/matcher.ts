@@ -1,4 +1,4 @@
-import type { Capability, Manifest, MatchResult } from './types'
+import type { Manifest, Capability, MatchResult, MatchCandidate } from './types'
 import { logger } from './logger'
 
   export const STOPWORDS = new Set([
@@ -79,7 +79,7 @@ export function extractParams(query: string, cap: Capability): Record<string, st
   for (const param of cap.params) {
     // Session params come from auth context, not query
     if (param.source === 'session') {
-      result[param.name] = '[from_session]'
+      result[param.name] = null // injected by resolver from auth context — not extracted from query
       continue
     }
 
@@ -242,9 +242,16 @@ export async function matchWithLLM(
   manifest: Manifest,
   options: LLMMatcherOptions
 ): Promise<MatchResult> {
+  // Truncate description and examples — prevents context window overflow and
+  // reduces prompt injection surface from third-party OpenAPI spec content.
+  const MAX_DESC_LEN    = 200
+  const MAX_EXAMPLE_LEN = 100
+
   const manifestSummary = manifest.capabilities.map(c =>
-    `- ${c.id} (${c.resolver.type}): ${c.description}${
-      c.examples?.length ? `\n  examples: ${c.examples.slice(0, 2).join(', ')}` : ''
+    `- ${c.id} (${c.resolver.type}): ${c.description.slice(0, MAX_DESC_LEN)}${c.description.length > MAX_DESC_LEN ? '…' : ''}${
+      c.examples?.length
+        ? `\n  examples: ${c.examples.slice(0, 2).map(e => e.slice(0, MAX_EXAMPLE_LEN)).join(', ')}`
+        : ''
     }`
   ).join('\n')
 
@@ -301,16 +308,22 @@ ${JSON.stringify({ user_query: query })}
     logger.warn(`LLM returned unknown capability ID: "${parsed.matched_capability}" — treating as out_of_scope`)
   }
 
+  // Build full candidate list — all capabilities scored, LLM winner marked as matched.
+  // This aligns the shape with keyword match results and allows the learning boost
+  // to surface alternatives if the LLM made a wrong call.
+  const llmConfidence = effectivelyOOS ? 0 : parsed.confidence as number
+  const allCandidates: MatchCandidate[] = manifest.capabilities.map(c => ({
+    capabilityId: c.id,
+    score:        c.id === capability?.id ? llmConfidence : 0,
+    matched:      c.id === capability?.id,
+  }))
+
   return {
     capability,
-    confidence:      effectivelyOOS ? 0 : parsed.confidence as number,
+    confidence:      llmConfidence,
     intent:          effectivelyOOS ? 'out_of_scope' : parsed.intent as MatchResult['intent'],
     extractedParams: (parsed.extracted_params ?? {}) as Record<string, string | null>,
     reasoning:       (parsed.reasoning as string) ?? 'No reasoning provided',
-    candidates:      capability ? [{
-      capabilityId: capability.id,
-      score:        parsed.confidence as number,
-      matched:      true,
-    }] : [],
+    candidates:      allCandidates,
   }
   }

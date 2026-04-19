@@ -103,7 +103,15 @@ export class FileCache implements CacheStore {
   private saveQueue: Promise<void>           = Promise.resolve()
 
   constructor(filePath = '.capman/cache.json') {
-    this.filePath = path.resolve(process.cwd(), filePath)
+    const cwd      = process.cwd()
+    const resolved = path.resolve(cwd, filePath)
+    if (!resolved.startsWith(cwd + path.sep)) {
+      throw new Error(
+        `FileCache path "${filePath}" resolves outside the working directory.\n` +
+        `Resolved: ${resolved}\nAllowed:  ${cwd}`
+      )
+    }
+    this.filePath = resolved
     logger.info(`FileCache initialized — writing to: ${this.filePath}`)
   }
 
@@ -113,7 +121,14 @@ export class FileCache implements CacheStore {
       const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        this.store = new Map(Object.entries(parsed))
+        // Normalize keys on load — prevents duplicate entries from older versions,
+        // manual edits, or any path that bypassed normalizeQuery() on write.
+        // e.g. "Show me articles" and "show me articles" collapse to the same key.
+        const normalized = new Map<string, CacheEntry>()
+        for (const [k, v] of Object.entries(parsed)) {
+          normalized.set(normalizeQuery(k), v as CacheEntry)
+        }
+        this.store = normalized
         logger.debug(`File cache loaded: ${this.store.size} entries`)
       } else {
         logger.warn(`File cache at ${this.filePath} contained unexpected format — starting fresh`)
@@ -145,20 +160,22 @@ export class FileCache implements CacheStore {
   async get(key: string, ttlMs?: number): Promise<CacheEntry | null> {
     await this.load()
     const entry = this.store.get(key)
-    if (entry) {
-      if (ttlMs && Date.now() - new Date(entry.cachedAt).getTime() > ttlMs) {
-        this.store.delete(key)
-        await this.save()
-        logger.debug(`Cache entry expired (file): "${key}"`)
-        return null
-      }
-      entry.hits++
+    if (!entry) return null
+
+    if (ttlMs && Date.now() - new Date(entry.cachedAt).getTime() > ttlMs) {
       this.store.delete(key)
-      this.store.set(key, entry)
-      logger.debug(`Cache hit (file): "${key}"`)
-      await this.save()
+      await this.save()  // eviction must be persisted
+      logger.debug(`Cache entry expired (file): "${key}"`)
+      return null
     }
-    return entry ?? null
+
+    entry.hits++
+    this.store.delete(key)    // reinsert at end for LRU ordering
+    this.store.set(key, entry)
+    // hits counter is in-memory only — not saved on read
+    // saves only happen on set() and eviction to avoid full file rewrite per request
+    logger.debug(`Cache hit (file): "${key}"`)
+    return entry
   }
 
   async set(key: string, result: MatchResult): Promise<void> {
@@ -228,6 +245,8 @@ export class ComboCache implements CacheStore {
     ])
   }
 
+  /** Returns the file-side entry count, not total unique entries across both stores.
+   *  Memory may have additional promoted entries not reflected here. */
   async size(): Promise<number> {
     return this.file.size()
   }

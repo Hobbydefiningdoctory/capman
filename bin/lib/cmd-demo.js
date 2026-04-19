@@ -117,13 +117,13 @@ module.exports = function cmdDemo() {
       const endpoint = result.capability.resolver.endpoints[0]
       let p = endpoint.path
       for (const [k, v] of Object.entries(result.extractedParams)) {
-        if (v) p = p.replace(`{${k}}`, String(v))
+        if (v) p = p.replaceAll(`{${k}}`, String(v))
       }
       actionLine = `${endpoint.method} ${config.baseUrl}${p}`
     } else if (result.capability.resolver.type === 'nav') {
       let dest = result.capability.resolver.destination
       for (const [k, v] of Object.entries(result.extractedParams)) {
-        if (v) dest = dest.replace(`{${k}}`, String(v))
+        if (v) dest = dest.replaceAll(`{${k}}`, String(v))
       }
       actionLine = `navigate → ${dest}`
     }

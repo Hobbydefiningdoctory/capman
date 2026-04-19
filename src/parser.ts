@@ -96,14 +96,14 @@ async function loadSpec(source: string): Promise<OpenAPISpec> {
       let res: Awaited<ReturnType<typeof fetch>>
       try {
         res = await fetch(source, { signal: controller.signal })
-      clearTimeout(timer)
-    } catch (err) {
-      clearTimeout(timer)
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error(`Timed out fetching spec from ${source} (10s limit)`)
-      }
-      throw err
-    }
+        clearTimeout(timer)
+      } catch (err) {
+        clearTimeout(timer)
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error(`Timed out fetching spec from ${source} (10s limit)`)
+        }
+        throw err
+     }
     if (!res.ok) throw new Error(`Failed to fetch spec: ${res.status} ${res.statusText}`)
     const text = await res.text()
     return parseSpecText(text, source)
@@ -115,7 +115,7 @@ async function loadSpec(source: string): Promise<OpenAPISpec> {
     throw new Error(`Spec file not found: ${resolved}`)
   }
   logger.info(`Reading OpenAPI spec from: ${resolved}`)
-  const text = fs.readFileSync(resolved, 'utf-8')
+  const text = await fs.promises.readFile(resolved, 'utf-8')
   return parseSpecText(text, source)
 }
 

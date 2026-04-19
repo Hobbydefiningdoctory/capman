@@ -61,11 +61,11 @@ export type { ParseResult } from './parser'
 // ─── Convenience: ask() ───────────────────────────────────────────────────────
 
 import { CapmanEngine } from './engine'
-import type { Manifest, MatchResult, ResolveResult } from './types'
+import type { Manifest, MatchResult, ResolveResult, MatchMode } from './types'
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions } from './resolver'
 
-export type MatchMode = 'cheap' | 'balanced' | 'accurate'
+export type { MatchMode } from './types'
 
 export interface AskOptions extends ResolveOptions {
   llm?: LLMMatcherOptions['llm']

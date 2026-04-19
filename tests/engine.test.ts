@@ -656,4 +656,36 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('query validation', () => {
+    it('throws TypeError for empty query', async () => {
+      const engine = new CapmanEngine({ manifest, cache: false, learning: false })
+      await expect(engine.ask('')).rejects.toThrow(TypeError)
+    })
+
+    it('throws TypeError for non-string query', async () => {
+      const engine = new CapmanEngine({ manifest, cache: false, learning: false })
+      // @ts-expect-error — testing runtime guard
+      await expect(engine.ask(null)).rejects.toThrow(TypeError)
+    })
+
+    it('throws RangeError for query exceeding max length', async () => {
+      const engine = new CapmanEngine({ manifest, cache: false, learning: false })
+      const longQuery = 'a'.repeat(CapmanEngine.MAX_QUERY_LENGTH + 1)
+      await expect(engine.ask(longQuery)).rejects.toThrow(RangeError)
+    })
+
+    it('accepts query at exactly max length', async () => {
+      const engine = new CapmanEngine({ manifest, cache: false, learning: false, mode: 'cheap' })
+      const maxQuery = 'a'.repeat(CapmanEngine.MAX_QUERY_LENGTH)
+      const result = await engine.ask(maxQuery, { dryRun: true })
+      expect(result).toBeDefined()
+    })
+
+    it('explain() throws RangeError for query exceeding max length', async () => {
+      const engine = new CapmanEngine({ manifest, cache: false, learning: false })
+      const longQuery = 'a'.repeat(CapmanEngine.MAX_QUERY_LENGTH + 1)
+      await expect(engine.explain(longQuery)).rejects.toThrow(RangeError)
+    })
+  })
+
 })

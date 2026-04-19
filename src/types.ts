@@ -175,3 +175,7 @@ export interface ExplainResult {
   resolvedVia:  'keyword' | 'llm'
   durationMs:   number
 }
+
+// ─── Match Mode ───────────────────────────────────────────────────────────────
+
+export type MatchMode = 'cheap' | 'balanced' | 'accurate'

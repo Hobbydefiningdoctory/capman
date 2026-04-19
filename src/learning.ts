@@ -104,7 +104,15 @@ export class FileLearningStore implements LearningStore {
   }
 
   constructor(filePath = '.capman/learning.json') {
-    this.filePath = path.resolve(process.cwd(), filePath)
+    const cwd      = process.cwd()
+    const resolved = path.resolve(cwd, filePath)
+    if (!resolved.startsWith(cwd + path.sep)) {
+      throw new Error(
+        `FileLearningStore path "${filePath}" resolves outside the working directory.\n` +
+        `Resolved: ${resolved}\nAllowed:  ${cwd}`
+      )
+    }
+    this.filePath = resolved
     logger.info(`FileLearningStore initialized — writing to: ${this.filePath}`)
   }
 
@@ -203,10 +211,21 @@ export class FileLearningStore implements LearningStore {
     }
   }
 
-  async record(entry: LearningEntry): Promise<void> {
+    async record(entry: LearningEntry): Promise<void> {
     await this.load()
-    this.entries.push(entry)
-    this.updateIndex(entry)
+    // Store only tokenized keywords — never raw query text.
+    // Raw queries may contain PII (emails, names, order IDs) that should
+    // not be persisted to disk under GDPR/CCPA data retention requirements.
+    const sanitized: LearningEntry = {
+      ...entry,
+      query: entry.query
+        .toLowerCase()
+        .split(/\W+/)
+        .filter(w => w.length > 2 && !STOPWORDS.has(w))
+        .join(' '),
+    }
+    this.entries.push(sanitized)
+    this.updateIndex(sanitized)
 
     if (this.entries.length > MAX_LEARNING_ENTRIES) {
       const excess   = this.entries.length - MAX_LEARNING_ENTRIES
@@ -252,9 +271,17 @@ export class FileLearningStore implements LearningStore {
       totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0,
     }
 
-    async record(entry: LearningEntry): Promise<void> {
-      this.entries.push(entry)
-      this.updateIndex(entry)
+      async record(entry: LearningEntry): Promise<void> {
+      const sanitized: LearningEntry = {
+        ...entry,
+        query: entry.query
+          .toLowerCase()
+          .split(/\W+/)
+          .filter(w => w.length > 2 && !STOPWORDS.has(w))
+          .join(' '),
+      }
+      this.entries.push(sanitized)
+      this.updateIndex(sanitized)
       if (this.entries.length > MAX_LEARNING_ENTRIES) {
         const excess = this.entries.length - MAX_LEARNING_ENTRIES
         const pruned = this.entries.splice(0, excess)
@@ -317,14 +344,6 @@ export class FileLearningStore implements LearningStore {
         if (Object.keys(this.index[word]).length === 0) {
           delete this.index[word]
         }
-      }
-    }
-
-    private rebuildIndex(): void {
-      this.index        = {}
-      this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
-      for (const entry of this.entries) {
-        this.updateIndex(entry)
       }
     }
 

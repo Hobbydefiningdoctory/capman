@@ -145,11 +145,25 @@ export async function resolve(
 }
 
 
-async function resolveApi(
-  resolver: ApiResolver | Omit<ApiResolver, 'type'>,
-  params: Record<string, unknown>,
-  options: ResolveOptions
-): Promise<ResolveResult> {
+  /**
+   * Resolves an API capability by executing all configured endpoints.
+   *
+   * ⚠️  PARALLEL EXECUTION: All endpoints are fired simultaneously via Promise.all().
+   * If any endpoint fails, the entire result is marked as failed and partial results
+   * are discarded — but side effects from successful endpoints cannot be rolled back.
+   *
+   * Example: a capability with two endpoints [POST /reserve, POST /confirm] will
+   * fire both in parallel. If /confirm fails after /reserve succeeded, the reservation
+   * exists but the caller receives success: false with no indication that /reserve ran.
+   *
+   * For capabilities where ordering or rollback matters, define separate capabilities
+   * with single endpoints and orchestrate them at the application layer.
+   */
+  async function resolveApi(
+    resolver: ApiResolver | Omit<ApiResolver, 'type'>,
+    params: Record<string, unknown>,
+    options: ResolveOptions
+  ): Promise<ResolveResult> {
   const startTime = Date.now()
   const retries   = options.retries  ?? 0
   const timeoutMs = options.timeoutMs ?? 5000
@@ -157,7 +171,9 @@ async function resolveApi(
   const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => ({
     method: endpoint.method,
     url: buildUrl(options.baseUrl ?? '', endpoint.path, params),
-    params,
+    params: Object.fromEntries(
+      Object.entries(params).filter(([, v]) => v !== null && v !== undefined)
+    ),
   }))
 
   if (options.dryRun) {
@@ -185,8 +201,12 @@ async function resolveApi(
           headers: options.headers ?? {},
           signal: controller.signal,
           body: ['POST', 'PUT', 'PATCH'].includes(call.method)
-            ? JSON.stringify(call.params)
-            : undefined,
+          ? JSON.stringify(
+              Object.fromEntries(
+                Object.entries(call.params).filter(([, v]) => v !== null && v !== undefined)
+              )
+            )
+          : undefined,
         })
         clearTimeout(timer)
         return res
@@ -258,11 +278,17 @@ function resolveNav(
     if (value === null || value === undefined) continue
     const str = String(value)
     validateNavParam(key, str)
-    destination = destination.replace(`{${key}}`, encodeURIComponent(str))
+    destination = destination.replaceAll(`{${key}}`, encodeURIComponent(str))
   }
   return { success: true, resolverType: 'nav', navTarget: destination }
 }
 
+// Note: buildUrl does not validate param values against an allowlist.
+// resolveNav() does validate via validateNavParam() because nav destinations
+// are used as deep links where path traversal is a real risk.
+// For API URLs, extractParams() strips most dangerous characters upstream,
+// so the practical risk is low — but any future caller bypassing extractParams
+// should add validation here too.
 function buildUrl(
   baseUrl: string,
   urlPath: string,
@@ -274,7 +300,7 @@ function buildUrl(
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined) continue  // never write null into URLs
     if (resolved.includes(`{${key}}`)) {
-      resolved = resolved.replace(`{${key}}`, encodeURIComponent(String(value)))
+      resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(String(value)))
     } else {
       unused[key] = value
     }
