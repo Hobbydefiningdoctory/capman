@@ -34,3 +34,6 @@ pnpm-workspace.yaml
 
 # Auto-generated
 src/version.ts
+
+# Runtime capman data — never commit cache or learning store
+.capman/
