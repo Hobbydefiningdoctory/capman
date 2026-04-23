@@ -45,10 +45,30 @@ export function loadConfig(configPath?: string): CapmanConfig {
       try {
         const mod = require(resolved)
         raw = mod.default ?? mod
-      } catch (err) {
+      } catch (err: unknown) {
+        const code    = (err as NodeJS.ErrnoException).code
+        const message = err instanceof Error ? err.message : String(err)
+
+        // ERR_REQUIRE_ESM — file is an ES module (Node v12–v21)
+        // On Node v22+, the error message changed but code remains ERR_REQUIRE_ESM
+        // for .mjs files; .js files in ESM packages may show a different message.
+        const isESM = code === 'ERR_REQUIRE_ESM' ||
+          message.includes('require() of ES Module') ||
+          message.includes('must use import to load ES Module')
+
+        if (isESM) {
+          throw new Error(
+            `Config file "${resolved}" is an ES module but capman requires CommonJS.\n` +
+            `Solutions:\n` +
+            `  1. Rename to capman.config.cjs\n` +
+            `  2. Change to: module.exports = { ... }\n` +
+            `  3. Remove "type": "module" from your package.json`
+          )
+        }
+
         throw new Error(
           `Failed to load config at ${resolved}:\n` +
-          `  ${err instanceof Error ? err.message : String(err)}\n\n` +
+          `  ${message}\n\n` +
           `Check your config file for syntax errors.`
         )
       }

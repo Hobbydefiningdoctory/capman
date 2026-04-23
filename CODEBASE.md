@@ -147,8 +147,9 @@ Usage analytics and keyword index — now incremental.
 
 Key exports:
 - `LearningStore` interface — `record(entry)`, `getStats()`, `getTopCapabilities(limit)`, `getIndex()`
-- `FileLearningStore` — persists to `.capman/learning.json`, caps at 10,000 entries
+- `FileLearningStore` — persists to `.capman/learning.json`, caps at 10,000 entries. Saves are debounced (5s) with synchronous flush on process exit
 - `MemoryLearningStore` — in-memory only, used in tests
+- `LearningIndex` — internal class shared by both stores. Maintains keyword index and stats counters incrementally. Eliminates ~80 lines of duplication
 
 `LearningEntry`:
 - `query`, `capabilityId`, `confidence`, `intent`, `extractedParams`

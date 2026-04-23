@@ -44,35 +44,6 @@ export interface LearningStore {
 
 // ─── Shared computation helpers ───────────────────────────────────────────────
 
-function computeStats(entries: LearningEntry[]): KeywordStats {
-  const index: Record<string, Record<string, number>> = {}
-  let totalQueries = 0
-  let llmQueries   = 0
-  let cacheHits    = 0
-  let outOfScope   = 0
-
-  for (const entry of entries) {
-    totalQueries++
-    if (entry.resolvedVia === 'llm')   llmQueries++
-    if (entry.resolvedVia === 'cache') cacheHits++
-    if (!entry.capabilityId)           outOfScope++
-
-    if (entry.capabilityId) {
-      const words = entry.query.toLowerCase()
-      .split(/\W+/)
-      .filter(w => w.length > 2 && !STOPWORDS.has(w))
-
-      for (const word of words) {
-        if (!index[word]) index[word] = {}
-        index[word][entry.capabilityId] =
-          (index[word][entry.capabilityId] ?? 0) + 1
-      }
-    }
-  }
-
-  return { index, totalQueries, llmQueries, cacheHits, outOfScope }
-}
-
 function computeTopCapabilities(
   entries: LearningEntry[],
   limit: number
@@ -89,34 +60,19 @@ function computeTopCapabilities(
     .map(([id, hits]) => ({ id, hits }))
 }
 
-// ─── File Learning Store ──────────────────────────────────────────────────────
 
-export class FileLearningStore implements LearningStore {
-  private filePath:  string
-  private entries:   LearningEntry[] = []
-  private loaded:    boolean         = false
-  private saveQueue: Promise<void>   = Promise.resolve()
+// ─── Shared Learning Index ────────────────────────────────────────────────────
+// Encapsulates keyword index and stats counters.
+// Both FileLearningStore and MemoryLearningStore compose this instead of
+// duplicating the same ~80 lines of index management logic.
 
-  // ── Incremental index — updated in record(), not rebuilt in getStats() ────
-  private index:        Record<string, Record<string, number>> = {}
-  private statsCounter: Omit<KeywordStats, 'index'> = {
+class LearningIndex {
+  index:        Record<string, Record<string, number>> = {}
+  statsCounter: Omit<KeywordStats, 'index'> = {
     totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0,
   }
 
-  constructor(filePath = '.capman/learning.json') {
-    const cwd      = process.cwd()
-    const resolved = path.resolve(cwd, filePath)
-    if (!resolved.startsWith(cwd + path.sep)) {
-      throw new Error(
-        `FileLearningStore path "${filePath}" resolves outside the working directory.\n` +
-        `Resolved: ${resolved}\nAllowed:  ${cwd}`
-      )
-    }
-    this.filePath = resolved
-    logger.info(`FileLearningStore initialized — writing to: ${this.filePath}`)
-  }
-
-  private updateIndex(entry: LearningEntry): void {
+  update(entry: LearningEntry): void {
     this.statsCounter.totalQueries++
     if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries++
     if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits++
@@ -134,23 +90,20 @@ export class FileLearningStore implements LearningStore {
     }
   }
 
-  private subtractFromIndex(entry: LearningEntry): void {
+  subtract(entry: LearningEntry): void {
+    // Shared counter decrements regardless of capabilityId
+    this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
+    if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries  - 1)
+    if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits   - 1)
     if (!entry.capabilityId) {
-      this.statsCounter.outOfScope    = Math.max(0, this.statsCounter.outOfScope - 1)
-      this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
-      if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
-      if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
+      this.statsCounter.outOfScope = Math.max(0, this.statsCounter.outOfScope - 1)
       return
     }
 
-    this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
-    if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
-    if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
-
+    // Keyword index cleanup
     const words = entry.query.toLowerCase()
       .split(/\W+/)
       .filter(w => w.length > 2 && !STOPWORDS.has(w))
-
     for (const word of words) {
       if (!this.index[word]) continue
       this.index[word][entry.capabilityId] =
@@ -164,12 +117,74 @@ export class FileLearningStore implements LearningStore {
     }
   }
 
-  private rebuildIndex(): void {
+  rebuild(entries: LearningEntry[]): void {
     this.index        = {}
     this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
-    for (const entry of this.entries) {
-      this.updateIndex(entry)
+    for (const entry of entries) {
+      this.update(entry)
     }
+  }
+
+  reset(): void {
+    this.index        = {}
+    this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
+  }
+
+  getStats(): KeywordStats {
+    return { ...this.statsCounter, index: structuredClone(this.index) }
+  }
+
+  getIndex(): Record<string, Record<string, number>> {
+    return structuredClone(this.index)
+  }
+}
+
+// ─── File Learning Store ──────────────────────────────────────────────────────
+
+export class FileLearningStore implements LearningStore {
+  private filePath:   string
+  private entries:    LearningEntry[] = []
+  private loaded:     boolean         = false
+  private saveQueue:  Promise<void>   = Promise.resolve()
+  private learningIndex = new LearningIndex()
+  private dirty:      boolean         = false
+  private saveTimer:  ReturnType<typeof setTimeout> | null = null
+
+  constructor(filePath = '.capman/learning.json') {
+    const cwd      = process.cwd()
+    const resolved = path.resolve(cwd, filePath)
+    const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
+    if (!resolved.startsWith(allowedPrefix)) {
+      throw new Error(
+        `FileLearningStore path "${filePath}" resolves outside the working directory.\n` +
+        `Resolved: ${resolved}\nAllowed:  ${cwd}`
+      )
+    }
+    this.filePath = resolved
+    logger.info(`FileLearningStore initialized — writing to: ${this.filePath}`)
+
+    // Flush on process exit — prevents losing the last N seconds of learning data
+    // on graceful shutdown (SIGTERM, SIGINT) or normal process.exit().
+    const flush = () => {
+      if (this.dirty) {
+        this.dirty = false
+        // Synchronous write on exit — async is not reliable in exit handlers
+        try {
+          const dir = require('path').dirname(this.filePath)
+          require('fs').mkdirSync(dir, { recursive: true })
+          require('fs').writeFileSync(
+            this.filePath,
+            JSON.stringify({ entries: this.entries, updatedAt: new Date().toISOString() }, null, 2)
+          )
+        } catch {
+          // Best-effort — can't do much in an exit handler
+        }
+      }
+    }
+
+    process.on('exit', flush)
+    process.on('SIGTERM', () => { flush(); process.exit(0) })
+    process.on('SIGINT',  () => { flush(); process.exit(0) })
   }
 
   private async load(): Promise<void> {
@@ -179,7 +194,7 @@ export class FileLearningStore implements LearningStore {
       const parsed = JSON.parse(raw)
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
           this.entries = parsed.entries
-          this.rebuildIndex()
+          this.learningIndex.rebuild(this.entries)
           logger.debug(`Learning store loaded: ${this.entries.length} entries`)
       } else {
         logger.warn(`Learning store at ${this.filePath} contained unexpected format — starting fresh`)
@@ -188,6 +203,19 @@ export class FileLearningStore implements LearningStore {
       // File doesn't exist yet — start fresh
     }
     this.loaded = true
+  }
+
+  private scheduleSave(urgencyMs = 5_000): void {
+    this.dirty = true
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(async () => {
+        this.saveTimer = null
+        if (this.dirty) {
+          this.dirty = false
+          await this._doSave()
+        }
+      }, urgencyMs)
+    }
   }
 
   private save(): Promise<void> {
@@ -199,19 +227,21 @@ export class FileLearningStore implements LearningStore {
     try {
       const dir = path.dirname(this.filePath)
       await fs.promises.mkdir(dir, { recursive: true })
+      const tmp = `${this.filePath}.tmp`
       await fs.promises.writeFile(
-        this.filePath,
+        tmp,
         JSON.stringify({
           entries: this.entries,
           updatedAt: new Date().toISOString(),
         }, null, 2)
       )
+      await fs.promises.rename(tmp, this.filePath)
     } catch (err) {
       logger.warn(`Failed to save learning store to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 
-    async record(entry: LearningEntry): Promise<void> {
+  async record(entry: LearningEntry): Promise<void> {
     await this.load()
     // Store only tokenized keywords — never raw query text.
     // Raw queries may contain PII (emails, names, order IDs) that should
@@ -225,28 +255,28 @@ export class FileLearningStore implements LearningStore {
         .join(' '),
     }
     this.entries.push(sanitized)
-    this.updateIndex(sanitized)
+    this.learningIndex.update(sanitized)
 
     if (this.entries.length > MAX_LEARNING_ENTRIES) {
       const excess   = this.entries.length - MAX_LEARNING_ENTRIES
       const pruned   = this.entries.splice(0, excess)
       // Subtract pruned entries from index — O(pruned × w) instead of O(n × w) full rebuild
       for (const entry of pruned) {
-        this.subtractFromIndex(entry)
+        this.learningIndex.subtract(entry)
       }
       logger.debug(`Learning store pruned ${excess} oldest entries (cap: ${MAX_LEARNING_ENTRIES})`)
     }
-    await this.save()
+    this.scheduleSave()
   }
 
   async getStats(): Promise<KeywordStats> {
     await this.load()
-    return { ...this.statsCounter, index: structuredClone(this.index) }
+    return this.learningIndex.getStats()
   }
 
   async getIndex(): Promise<Record<string, Record<string, number>>> {
     await this.load()
-    return structuredClone(this.index)
+    return this.learningIndex.getIndex()
   }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
@@ -256,8 +286,7 @@ export class FileLearningStore implements LearningStore {
 
   async clear(): Promise<void> {
     this.entries = []
-    this.index        = {}
-    this.statsCounter = {totalQueries: 0, llmQueries: 0, cacheHits: 0,outOfScope: 0 }
+    this.learningIndex.reset()
     await this.save()
   }
 }
@@ -266,12 +295,9 @@ export class FileLearningStore implements LearningStore {
 
   export class MemoryLearningStore implements LearningStore {
     private entries:      LearningEntry[]                        = []
-    private index:        Record<string, Record<string, number>> = {}
-    private statsCounter: Omit<KeywordStats, 'index'>            = {
-      totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0,
-    }
+    private learningIndex = new LearningIndex()
 
-      async record(entry: LearningEntry): Promise<void> {
+  async record(entry: LearningEntry): Promise<void> {
       const sanitized: LearningEntry = {
         ...entry,
         query: entry.query
@@ -281,70 +307,22 @@ export class FileLearningStore implements LearningStore {
           .join(' '),
       }
       this.entries.push(sanitized)
-      this.updateIndex(sanitized)
+      this.learningIndex.update(sanitized)
       if (this.entries.length > MAX_LEARNING_ENTRIES) {
         const excess = this.entries.length - MAX_LEARNING_ENTRIES
         const pruned = this.entries.splice(0, excess)
         for (const entry of pruned) {
-          this.subtractFromIndex(entry)
+          this.learningIndex.subtract(entry)
         }
       }
     }
   
-    async getStats(): Promise<KeywordStats> {
-      return { ...this.statsCounter, index: structuredClone(this.index) }
+  async getStats(): Promise<KeywordStats> {
+     return this.learningIndex.getStats()
     }
 
-    async getIndex(): Promise<Record<string, Record<string, number>>> {
-      return structuredClone(this.index)
-    }
-
-    private updateIndex(entry: LearningEntry): void {
-      this.statsCounter.totalQueries++
-      if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries++
-      if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits++
-      if (!entry.capabilityId)           this.statsCounter.outOfScope++
-
-      if (entry.capabilityId) {
-        const words = entry.query.toLowerCase()
-          .split(/\W+/)
-          .filter(w => w.length > 2 && !STOPWORDS.has(w))
-        for (const word of words) {
-          this.index[word] ??= {}
-          this.index[word][entry.capabilityId] =
-            (this.index[word][entry.capabilityId] ?? 0) + 1
-        }
-      }
-    }
-
-    private subtractFromIndex(entry: LearningEntry): void {
-      if (!entry.capabilityId) {
-        this.statsCounter.outOfScope    = Math.max(0, this.statsCounter.outOfScope - 1)
-        this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
-        if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
-        if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
-        return
-      }
-
-      this.statsCounter.totalQueries  = Math.max(0, this.statsCounter.totalQueries - 1)
-      if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries  = Math.max(0, this.statsCounter.llmQueries - 1)
-      if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits   = Math.max(0, this.statsCounter.cacheHits - 1)
-
-      const words = entry.query.toLowerCase()
-        .split(/\W+/)
-        .filter(w => w.length > 2 && !STOPWORDS.has(w))
-
-      for (const word of words) {
-        if (!this.index[word]) continue
-        this.index[word][entry.capabilityId] =
-          (this.index[word][entry.capabilityId] ?? 1) - 1
-        if (this.index[word][entry.capabilityId] <= 0) {
-          delete this.index[word][entry.capabilityId]
-        }
-        if (Object.keys(this.index[word]).length === 0) {
-          delete this.index[word]
-        }
-      }
+  async getIndex(): Promise<Record<string, Record<string, number>>> {
+    return this.learningIndex.getIndex()
     }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
@@ -353,8 +331,7 @@ export class FileLearningStore implements LearningStore {
 
   async clear(): Promise<void> {
     this.entries = []
-    this.index        = {}
-    this.statsCounter = {totalQueries: 0, llmQueries: 0, cacheHits: 0,outOfScope: 0 }
+    this.learningIndex.reset()
   }
 }
 

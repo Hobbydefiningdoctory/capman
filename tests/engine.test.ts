@@ -201,8 +201,8 @@ describe('CapmanEngine', () => {
         mode: 'cheap',
       })
 
-      await engine.ask('Show me articles') // keyword
-      await engine.ask('Show me articles') // cache
+      await engine.ask('Show me articles', { dryRun: true }) // keyword
+      await engine.ask('Show me articles', { dryRun: true }) // cache
 
       const stats = await engine.getStats()
       expect(stats?.cacheHits).toBe(1)

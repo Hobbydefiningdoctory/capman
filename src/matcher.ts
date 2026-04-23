@@ -1,6 +1,15 @@
 import type { Manifest, Capability, MatchResult, MatchCandidate } from './types'
 import { logger } from './logger'
 
+// ─── Typed error for LLM parse failures ──────────────────────────────────────
+
+export class LLMParseError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LLMParseError'
+  }
+}
+
   export const STOPWORDS = new Set([
   'show', 'me', 'the', 'get', 'find', 'fetch', 'give', 'please',
   'can', 'you', 'i', 'want', 'to', 'a', 'an', 'my', 'our', 'your',
@@ -170,7 +179,8 @@ export function match(query: string, manifest: Manifest): MatchResult {
     }
   }
 
-  logger.info(`Matching query: "${query}"`)
+  logger.info(`Matching query (${query.length} chars)`)
+  logger.debug(`Full query: "${query}"`)
   logger.debug(`Manifest has ${manifest.capabilities.length} capabilities`)
 
   let best: Capability | null = null
@@ -286,14 +296,14 @@ ${JSON.stringify({ user_query: query })}
   try {
     parsed = JSON.parse(clean)
   } catch {
-    throw new Error(`LLM_PARSE_ERROR: LLM returned invalid JSON. First 300 chars: ${clean.slice(0, 300)}`)
+    throw new LLMParseError(`LLM returned invalid JSON. First 300 chars: ${clean.slice(0, 300)}`)
   }
 
   if (typeof parsed.matched_capability !== 'string') {
-    throw new Error(`LLM_PARSE_ERROR: missing "matched_capability" field in response`)
+    throw new LLMParseError(`missing "matched_capability" field in response`)
   }
   if (typeof parsed.confidence !== 'number') {
-    throw new Error(`LLM_PARSE_ERROR: missing numeric "confidence" field in response`)
+    throw new LLMParseError(`missing numeric "confidence" field in response`)
   }
 
   const isOOS      = parsed.matched_capability === 'OUT_OF_SCOPE'

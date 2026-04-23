@@ -4,6 +4,32 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.3] — 2026-04-22
+### Fixed
+
+**Critical:**
+- `.capman/` added to `.gitignore` — cache and learning files were being committed to git, exposing internal API path structures and cached match data
+- Session `userId` no longer leaks into query string on multi-endpoint capabilities — path template check was joining all endpoint paths before checking for `{param}`, causing false positives. Now checks per-endpoint inside `resolveApi()`
+- File writes are now atomic — `FileCache` and `FileLearningStore` write to a `.tmp` file then rename, preventing corrupt JSON on process crash mid-write
+- `ask()` now caches only after successful resolution — previously cached match result before Step 5 (resolve), permanently poisoning the cache on transient network failures
+**High:**
+- API path params validated against allowlist in `buildUrl()` — `encodeURIComponent` does not encode `/`, allowing path traversal via params like `../../admin`. Now mirrors the validation already applied in `resolveNav()`
+- Raw query text removed from `info`-level logs — queries like `"orders for jane@corp.com"` were emitted at info level to stdout. Query text now only appears at `debug` level
+- Retry logic now only retries safe/idempotent methods (GET, HEAD, OPTIONS) — previously retried POST/PUT/PATCH/DELETE which could cause duplicate orders, double charges etc. Add `retryAllMethods: true` to `ResolveOptions` to opt in to retrying writes
+- `FileCache` concurrent load guard added — two simultaneous `get()` calls before `loaded = true` both read the file. Now serialized through a shared `loadPromise`
+**Medium:**
+- Version comparison now validates semver format before parsing — `Number("v0")` → `NaN`, `NaN !== NaN` always true, causing spurious version warnings on every startup for non-semver manifest versions
+- `LearningIndex` class extracted — `updateIndex`, `subtractFromIndex`, `rebuildIndex` were copy-pasted verbatim (~80 lines) between `FileLearningStore` and `MemoryLearningStore`. Both now compose `LearningIndex`
+- `computeStats()` dead code removed — was only used by old `getStats()` before incremental index was introduced in v0.5.0
+- `FileLearningStore` now debounces saves — previously wrote full JSON on every `record()` call (every `ask()`). Now batches with a 5s debounce timer and flushes synchronously on `process.exit`, `SIGTERM`, `SIGINT`
+- YAML catch block now distinguishes `MODULE_NOT_FOUND` from actual parse errors using `err.code` — previously swallowed real YAML syntax errors with a generic message
+- `baseUrl` now required by Zod schema when any capability uses `api` or `hybrid` resolver — previously optional, producing silent relative URLs that fail with opaque connection errors
+- `explain()` now asserts `resolvedVia !== 'cache'` at runtime — makes the invariant that `explain()` never reads from cache explicit and catches future regressions immediately
+- ESM config files now produce an actionable error — `ERR_REQUIRE_ESM` previously surfaced as a generic "Failed to load config" message with no guidance. Now explains the issue and lists three solutions
+  
+### Tests
+- 90 tests passing
+
 ## [0.5.2] — 2026-04-20
 ### Fixed
 

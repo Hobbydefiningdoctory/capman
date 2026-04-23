@@ -75,14 +75,22 @@ const CapabilitySchema = z.object({
 
 export const CapmanConfigSchema = z.object({
   app:          z.string().min(1, 'app name is required'),
-  baseUrl:      z.string().url('baseUrl must be a valid URL').optional(),
+  baseUrl:      z.string().url().optional(),
   capabilities: z.array(CapabilitySchema)
-                .min(1, 'at least one capability is required')
-                .refine(
-                  caps => new Set(caps.map(c => c.id)).size === caps.length,
-                  'capability ids must be unique'
-                ),
-})
+    .min(1, 'at least one capability is required')
+    .refine(
+      caps => new Set(caps.map(c => c.id)).size === caps.length,
+      'capability ids must be unique'
+    ),
+}).refine(
+  cfg => {
+    const needsBaseUrl = cfg.capabilities.some(
+      c => c.resolver.type === 'api' || c.resolver.type === 'hybrid'
+    )
+    return !needsBaseUrl || !!cfg.baseUrl
+  },
+  { message: 'baseUrl is required when any capability uses an api or hybrid resolver' }
+)
 
 // ─── Manifest Schema ──────────────────────────────────────────────────────────
 

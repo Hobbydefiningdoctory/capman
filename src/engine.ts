@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError } from './matcher'
 import { resolve as _resolve } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -168,13 +168,21 @@ export interface EngineResult {
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
     // ── Manifest version compatibility check ─────────────────────────────────
     if (options.manifest.version) {
-      const [mMaj, mMin] = options.manifest.version.split('.').map(Number)
-      const [eMaj, eMin] = VERSION.split('.').map(Number)
-      if (mMaj !== eMaj || mMin !== eMin) {
+      const SEMVER_RE = /^\d+\.\d+\.\d+$/
+      if (SEMVER_RE.test(options.manifest.version) && SEMVER_RE.test(VERSION)) {
+        const [mMaj, mMin] = options.manifest.version.split('.').map(Number)
+        const [eMaj, eMin] = VERSION.split('.').map(Number)
+        if (mMaj !== eMaj || mMin !== eMin) {
+          console.warn(
+            `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
+            `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
+            `If you experience unexpected matching issues, regenerate with: npx capman generate`
+          )
+        }
+      } else if (options.manifest.version !== VERSION) {
         console.warn(
-          `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
-          `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
-          `If you experience unexpected matching issues, regenerate with: npx capman generate`
+          `[capman] Manifest version "${options.manifest.version}" could not be compared ` +
+          `to engine version "${VERSION}" — version strings are not valid semver.`
         )
       }
     }
@@ -209,7 +217,8 @@ export interface EngineResult {
       const cached = await this.cache.get(queryKey, this.cacheTtlMs ?? undefined)
       if (cached) {
         steps.push({ type: 'cache_check', status: 'hit', durationMs: Date.now() - cacheStart, detail: 'Served from cache' })
-        logger.info(`Cache hit for: "${query}"`)
+        logger.info(`Cache hit — capability: "${cached.result.capability?.id ?? 'none'}"`)
+        logger.debug(`Cache hit for query: "${query}"`)
 
         // Re-extract params from the current query — never re-use cached params.
         // Cached params belong to the original query (potentially from a different user).
@@ -270,17 +279,8 @@ export interface EngineResult {
         detail: `level: ${privacyLevel}`,
       })
     }
-
-    // ── Step 4: Cache the match result (public capabilities only) ─────────────
-    // Non-public capabilities are never cached — prevents auth bypass where
-    // User A's cached match is served to User B without privacy enforcement.
-    if (this.cache && matchResult.capability
-        && matchResult.capability.privacy.level === 'public') {
-      const queryKey = normalizeQuery(query)
-      await this.cache.set(queryKey, matchResult)
-    }
     
-    // ── Step 5: Resolve ──────────────────────────────────────────────────────
+    // ── Step 4: Resolve ──────────────────────────────────────────────────────
     const resolveStart = Date.now()
     const resolution = await _resolve(
       matchResult,
@@ -293,6 +293,17 @@ export interface EngineResult {
       durationMs: Date.now() - resolveStart,
       detail: resolution.error ?? `via ${resolution.resolverType}`,
     })
+
+    // ── Step 5: Cache after successful resolution ────────────────────────────
+    // Only cache when resolution succeeded — a failed resolution (network error,
+    // auth failure, bad params) must not poison the cache. A cached failed match
+    // would cause every subsequent cache hit to attempt the same failing resolution
+    // until TTL expires.
+    if (this.cache && resolution.success && matchResult.capability
+       && matchResult.capability.privacy.level === 'public') {
+       const queryKey = normalizeQuery(query)
+       await this.cache.set(queryKey, matchResult)
+      }
 
     // ── Step 6: Build reasoning array ────────────────────────────────────────
     const reasoning: string[] = []
@@ -396,8 +407,14 @@ export interface EngineResult {
     const start = Date.now()
 
     // ── Match — shared with ask() via _runMatch() ─────────────────────────────
-    let { matchResult, resolvedVia: _resolvedVia } = await this._runMatch(query)
-    let resolvedVia = _resolvedVia as ExplainResult['resolvedVia']
+      let { matchResult, resolvedVia: _resolvedVia } = await this._runMatch(query)
+      // explain() never reads from cache — it always runs a fresh match.
+      // This assertion catches any future refactor that accidentally adds
+      // cache reads to _runMatch() when called from explain().
+      if (_resolvedVia === 'cache') {
+        throw new Error('Invariant violation: explain() must never resolve via cache')
+      }
+      let resolvedVia = _resolvedVia as ExplainResult['resolvedVia']
 
     // ── Apply learning boost (same as ask()) ─────────────────────────────────
     matchResult = await this.applyBoostToMatchResult(query, matchResult)
@@ -645,7 +662,7 @@ export interface EngineResult {
               }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {
-              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+              const isParseError = err instanceof LLMParseError
               if (!isParseError) this.recordLLMFailure()
               logger.warn(`LLM call failed — falling back to keyword: ${err instanceof Error ? err.message : String(err)}`)
               const t2 = Date.now()
@@ -678,7 +695,8 @@ export interface EngineResult {
             steps?.push({ type: 'llm_match', status: 'skip', durationMs: 0, detail: skipReason })
             matchResult = keywordResult
           } else {
-            logger.info(`Low confidence (${keywordResult.confidence}%) — escalating to LLM`)
+            logger.info(`Low keyword confidence (${keywordResult.confidence}%) — escalating to LLM`)
+            logger.debug(`Query escalated to LLM: "${query}"`)
             const t2 = Date.now()
             try {
               matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
@@ -696,7 +714,7 @@ export interface EngineResult {
               }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {
-              const isParseError = String(err).startsWith('LLM_PARSE_ERROR')
+              const isParseError = err instanceof LLMParseError
               if (!isParseError) this.recordLLMFailure()
               logger.warn(`LLM call failed — falling back to keyword: ${err instanceof Error ? err.message : String(err)}`)
               steps?.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t2, detail: String(err) })

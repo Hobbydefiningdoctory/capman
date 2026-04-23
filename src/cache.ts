@@ -97,15 +97,17 @@ export class MemoryCache implements CacheStore {
 const FILE_CACHE_MAX = 2048
 
 export class FileCache implements CacheStore {
-  private filePath:  string
-  private store:     Map<string, CacheEntry> = new Map()
-  private loaded:    boolean                 = false
-  private saveQueue: Promise<void>           = Promise.resolve()
+  private filePath:    string
+  private store:       Map<string, CacheEntry> = new Map()
+  private loaded:      boolean                 = false
+  private loadPromise: Promise<void> | null    = null
+  private saveQueue:   Promise<void>           = Promise.resolve()
 
   constructor(filePath = '.capman/cache.json') {
     const cwd      = process.cwd()
     const resolved = path.resolve(cwd, filePath)
-    if (!resolved.startsWith(cwd + path.sep)) {
+    const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
+    if (!resolved.startsWith(allowedPrefix)) {
       throw new Error(
         `FileCache path "${filePath}" resolves outside the working directory.\n` +
         `Resolved: ${resolved}\nAllowed:  ${cwd}`
@@ -115,9 +117,15 @@ export class FileCache implements CacheStore {
     logger.info(`FileCache initialized — writing to: ${this.filePath}`)
   }
 
-  private async load(): Promise<void> {
-    if (this.loaded) return
-    try {
+      private load(): Promise<void> {
+        if (!this.loadPromise) {
+          this.loadPromise = this._doLoad()
+        }
+        return this.loadPromise
+      }
+
+      private async _doLoad(): Promise<void> {
+        try {
       const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
       const parsed = JSON.parse(raw)
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -136,7 +144,7 @@ export class FileCache implements CacheStore {
     } catch {
       // File doesn't exist yet — start fresh
     }
-    this.loaded = true
+  this.loaded = true
   }
 
   private save(): Promise<void> {
@@ -148,10 +156,9 @@ export class FileCache implements CacheStore {
     try {
       const dir = path.dirname(this.filePath)
       await fs.promises.mkdir(dir, { recursive: true })
-      await fs.promises.writeFile(
-        this.filePath,
-        JSON.stringify(Object.fromEntries(this.store), null, 2)
-      )
+      const tmp = `${this.filePath}.tmp`
+      await fs.promises.writeFile(tmp, JSON.stringify(Object.fromEntries(this.store), null, 2))
+      await fs.promises.rename(tmp, this.filePath)
     } catch (err) {
       logger.warn(`Failed to save file cache to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`)
     }

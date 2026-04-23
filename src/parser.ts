@@ -123,17 +123,23 @@ function parseSpecText(text: string, source: string): OpenAPISpec {
   // Try JSON first
   try { return JSON.parse(text) } catch {}
 
-  // Try YAML — only if yaml package available
-  try {
-    const yaml = require('js-yaml')
-    return yaml.load(text) as OpenAPISpec
-  } catch {
-    // js-yaml not installed — try basic YAML detection
-    if (source.endsWith('.yaml') || source.endsWith('.yml')) {
-      throw new Error(
-        'YAML spec detected but js-yaml is not installed.\n' +
-        'Install it: npm install js-yaml\n' +
-        'Or convert your spec to JSON first.'
+        // Try YAML — only if yaml package available
+        try {
+          const yaml = require('js-yaml')
+          return yaml.load(text) as OpenAPISpec
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          // Distinguish "module not found" from actual YAML parse errors
+          const code = (err as NodeJS.ErrnoException).code
+          if (code !== 'MODULE_NOT_FOUND') {
+            throw new Error(`YAML parse error in "${source}": ${msg}`)
+          }
+          // js-yaml not installed — fall through to extension check
+          if (source.endsWith('.yaml') || source.endsWith('.yml')) {
+            throw new Error(
+              'YAML spec detected but js-yaml is not installed.\n' +
+              'Install it: npm install js-yaml\n' +
+              'Or convert your spec to JSON first.'
       )
     }
   }

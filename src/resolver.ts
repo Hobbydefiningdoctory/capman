@@ -22,6 +22,13 @@ export interface ResolveOptions {
   retries?: number
   /** Timeout in milliseconds (default: 5000) */
   timeoutMs?: number
+  /**
+   * When true, retries all HTTP methods including POST/PUT/PATCH/DELETE.
+   * Use only for idempotent write operations — retrying non-idempotent
+   * methods can cause duplicate side effects (duplicate orders, double charges).
+   * @default false
+   */
+  retryAllMethods?: boolean
 }
 
 function redactParams(params: Record<string, unknown>): Record<string, string> {
@@ -92,14 +99,8 @@ export async function resolve(
   // they must never leak into the query string as ?user_id=xyz
   const enrichedParams = { ...params }
   if (options.auth?.userId !== undefined && options.auth.userId !== '') {
-    const resolver = capability.resolver
-    const pathTemplate =
-      resolver.type === 'api'    ? resolver.endpoints.map(e => e.path).join('') :
-      resolver.type === 'hybrid' ? resolver.api.endpoints.map(e => e.path).join('') :
-      resolver.type === 'nav'    ? resolver.destination : ''
-
     for (const param of capability.params) {
-      if (param.source === 'session' && pathTemplate.includes(`{${param.name}}`)) {
+      if (param.source === 'session') {
         enrichedParams[param.name] = options.auth.userId!
         logger.debug(`Injected session param "${param.name}" (value redacted)`)
       }
@@ -112,9 +113,16 @@ export async function resolve(
   logger.debug(`Options: baseUrl=${options.baseUrl} dryRun=${options.dryRun}`)
 
   try {
+    
+    const sessionParamNames = new Set(
+      capability.params
+        .filter(p => p.source === 'session')
+        .map(p => p.name)
+    )
+    
     switch (resolver.type) {
       case 'api':
-        return await resolveApi(resolver, enrichedParams, options)
+        return await resolveApi(resolver, enrichedParams, options, sessionParamNames)
 
       case 'nav':
         return resolveNav(resolver, enrichedParams)
@@ -122,7 +130,7 @@ export async function resolve(
       case 'hybrid': {
         logger.debug('Hybrid resolver — running API and nav in parallel')
         const [apiResult, navResult] = await Promise.all([
-          resolveApi(resolver.api as ApiResolver, enrichedParams, options),
+          resolveApi(resolver.api as ApiResolver, enrichedParams, options, sessionParamNames),
           Promise.resolve(resolveNav(resolver.nav as NavResolver, enrichedParams)),
         ])
         return {
@@ -159,22 +167,34 @@ export async function resolve(
    * For capabilities where ordering or rollback matters, define separate capabilities
    * with single endpoints and orchestrate them at the application layer.
    */
-  async function resolveApi(
-    resolver: ApiResolver | Omit<ApiResolver, 'type'>,
-    params: Record<string, unknown>,
-    options: ResolveOptions
-  ): Promise<ResolveResult> {
+async function resolveApi(
+  resolver: ApiResolver | Omit<ApiResolver, 'type'>,
+  params: Record<string, unknown>,
+  options: ResolveOptions,
+  sessionParamNames: Set<string> = new Set()
+): Promise<ResolveResult> {
   const startTime = Date.now()
   const retries   = options.retries  ?? 0
   const timeoutMs = options.timeoutMs ?? 5000
 
-  const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => ({
-    method: endpoint.method,
-    url: buildUrl(options.baseUrl ?? '', endpoint.path, params),
-    params: Object.fromEntries(
-      Object.entries(params).filter(([, v]) => v !== null && v !== undefined)
-    ),
-  }))
+  const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => {
+    // Build per-endpoint params — only inject session params if this
+    // specific endpoint has the placeholder. Prevents userId leaking
+    // as ?user_id=xyz on endpoints that don't use it in their path.
+    const endpointParams = { ...params }
+    for (const name of sessionParamNames) {
+      if (!endpoint.path.includes(`{${name}}`)) {
+        delete endpointParams[name]  // strip session param — not in this endpoint's path
+      }
+    }
+    return {
+      method: endpoint.method,
+      url: buildUrl(options.baseUrl ?? '', endpoint.path, endpointParams),
+      params: Object.fromEntries(
+        Object.entries(endpointParams).filter(([, v]) => v !== null && v !== undefined)
+      ),
+    }
+  })
 
   if (options.dryRun) {
     return { success: true, resolverType: 'api', apiCalls, durationMs: Date.now() - startTime }
@@ -190,9 +210,16 @@ export async function resolve(
   }
 
   // ── Fetch with retry + timeout (iterative — no recursion) ────────────────
-  async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
-    let lastErr: unknown
-    for (let attempt = 0; attempt <= retries; attempt++) {
+      // Only retry safe/idempotent methods — retrying POST/PUT/PATCH/DELETE
+      // can cause duplicate side effects (e.g. duplicate orders, double charges).
+        const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+        async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
+          const effectiveRetries = (options.retryAllMethods || SAFE_METHODS.has(call.method))
+            ? retries
+            : 0
+        let lastErr: unknown
+        for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
       try {
@@ -214,8 +241,8 @@ export async function resolve(
         clearTimeout(timer)
         lastErr = err
         const isTimeout = err instanceof Error && err.name === 'AbortError'
-        if (attempt < retries) {
-          logger.warn(`Request failed (attempt ${attempt + 1}/${retries + 1}) — retrying: ${isTimeout ? 'timeout' : err}`)
+          if (attempt < effectiveRetries) {
+            logger.warn(`Request failed (attempt ${attempt + 1}/${effectiveRetries + 1}) — retrying: ${isTimeout ? 'timeout' : err}`)
         } else {
           throw isTimeout ? new Error(`Request timed out after ${timeoutMs}ms`) : err
         }
@@ -283,6 +310,18 @@ function resolveNav(
   return { success: true, resolverType: 'nav', navTarget: destination }
 }
 
+function validateApiPathParam(key: string, value: string): void {
+  // Prevent path traversal via unencoded slashes — encodeURIComponent does not
+  // encode '/' so a value like '../../admin' would traverse the path hierarchy.
+  // This mirrors the allowlist validation already applied in resolveNav().
+  if (!/^[a-zA-Z0-9_\-.:@]+$/.test(value)) {
+    throw new Error(
+      `API path param "${key}" contains invalid characters: "${value}". ` +
+      `Only alphanumeric, hyphens, underscores, dots, colons, and @ are allowed.`
+    )
+  }
+}
+
 // Note: buildUrl does not validate param values against an allowlist.
 // resolveNav() does validate via validateNavParam() because nav destinations
 // are used as deep links where path traversal is a real risk.
@@ -300,7 +339,9 @@ function buildUrl(
   for (const [key, value] of Object.entries(params)) {
     if (value === null || value === undefined) continue  // never write null into URLs
     if (resolved.includes(`{${key}}`)) {
-      resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(String(value)))
+      const str = String(value)
+      validateApiPathParam(key, str)
+      resolved = resolved.replaceAll(`{${key}}`, encodeURIComponent(str))
     } else {
       unused[key] = value
     }

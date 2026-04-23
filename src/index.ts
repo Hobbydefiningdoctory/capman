@@ -38,6 +38,7 @@ export {
   matchWithLLM,
   extractParams,
 } from './matcher'
+export { LLMParseError } from './matcher'
 export type { LLMMatcherOptions } from './matcher'
 
 export { resolve } from './resolver'

@@ -417,6 +417,28 @@ describe('resolve()', () => {
       expect(result.success).toBe(false)
       expect(result.error).toContain('invalid characters')
     })
+
+    it('rejects API path params with path traversal characters', async () => {
+      const matchResult = match('Find resource by ID', manifest)
+      const result = await resolve(
+        matchResult,
+        { resource_id: '../../admin' },
+        { baseUrl: 'https://api.test.com', dryRun: true }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('invalid characters')
+    })
+
+    it('rejects API path params with forward slash', async () => {
+      const matchResult = match('Find resource by ID', manifest)
+      const result = await resolve(
+        matchResult,
+        { resource_id: 'valid/path' },
+        { baseUrl: 'https://api.test.com', dryRun: true }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('invalid characters')
+    })
   })
 
   describe('Session param injection', () => {
@@ -480,6 +502,43 @@ describe('resolve()', () => {
       expect(result.apiCalls?.[0].url).toBe('https://api.test.com/feed')
       expect(result.apiCalls?.[0].url).not.toContain('user_id')
       expect(result.apiCalls?.[0].url).not.toContain('abc123')
+    })
+    it('does not inject session param for endpoints that lack the placeholder', async () => {
+      const multiEndpointConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [{
+          id: 'multi_endpoint',
+          name: 'Multi endpoint',
+          description: 'Capability with multiple endpoints only one having user_id.',
+          examples: ['do multi endpoint thing'],
+          params: [
+            { name: 'user_id', description: 'User ID', required: true, source: 'session' }
+          ],
+          returns: ['result'],
+          resolver: {
+            type: 'api',
+            endpoints: [
+              { method: 'GET', path: '/users/{user_id}/data' },  // has placeholder
+              { method: 'POST', path: '/audit/log' },             // no placeholder
+            ],
+          },
+          privacy: { level: 'user_owned' },
+        }],
+      }
+      const m = generate(multiEndpointConfig)
+      const matchResult = match('do multi endpoint thing', m)
+      const result = await resolve(matchResult, {}, {
+        baseUrl: 'https://api.test.com',
+        dryRun: true,
+        auth: { isAuthenticated: true, role: 'user', userId: 'abc123' },
+      })
+      const urls = result.apiCalls?.map(c => c.url) ?? []
+      // First endpoint — user_id correctly substituted
+      expect(urls[0]).toBe('https://api.test.com/users/abc123/data')
+      // Second endpoint — user_id must NOT appear in URL or query string
+      expect(urls[1]).toBe('https://api.test.com/audit/log')
+      expect(urls[1]).not.toContain('user_id')
+      expect(urls[1]).not.toContain('abc123')
     })
   })
   
