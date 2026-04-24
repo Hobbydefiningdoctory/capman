@@ -5,6 +5,17 @@ import { logger } from './logger'
 const MAX_LEARNING_ENTRIES = 10_000
 import { STOPWORDS } from './matcher'
 
+// Module-level registry — tracks all active FileLearningStore instances
+// for process exit flushing. Handlers registered once to avoid accumulation.
+const activeStores = new Set<FileLearningStore>()
+let exitHandlersRegistered = false
+
+function flushAllStores(): void {
+  for (const store of activeStores) {
+    store.flushSync()
+  }
+}
+
 // ─── Learning Entry ───────────────────────────────────────────────────────────
 
 export interface LearningEntry {
@@ -150,6 +161,7 @@ export class FileLearningStore implements LearningStore {
   private dirty:      boolean         = false
   private saveTimer:  ReturnType<typeof setTimeout> | null = null
 
+
   constructor(filePath = '.capman/learning.json') {
     const cwd      = process.cwd()
     const resolved = path.resolve(cwd, filePath)
@@ -163,30 +175,31 @@ export class FileLearningStore implements LearningStore {
     this.filePath = resolved
     logger.info(`FileLearningStore initialized — writing to: ${this.filePath}`)
 
-    // Flush on process exit — prevents losing the last N seconds of learning data
-    // on graceful shutdown (SIGTERM, SIGINT) or normal process.exit().
-    const flush = () => {
-      if (this.dirty) {
-        this.dirty = false
-        // Synchronous write on exit — async is not reliable in exit handlers
-        try {
-          const dir = require('path').dirname(this.filePath)
-          require('fs').mkdirSync(dir, { recursive: true })
-          require('fs').writeFileSync(
-            this.filePath,
-            JSON.stringify({ entries: this.entries, updatedAt: new Date().toISOString() }, null, 2)
-          )
-        } catch {
-          // Best-effort — can't do much in an exit handler
-        }
-      }
-    }
+  activeStores.add(this)
 
-    process.on('exit', flush)
-    process.on('SIGTERM', () => { flush(); process.exit(0) })
-    process.on('SIGINT',  () => { flush(); process.exit(0) })
+  if (!exitHandlersRegistered) {
+    exitHandlersRegistered = true
+    process.on('exit', flushAllStores)
+    process.on('SIGTERM', () => { flushAllStores(); process.exit(0) })
+    process.on('SIGINT',  () => { flushAllStores(); process.exit(0) })
   }
+}
 
+  flushSync(): void {
+    if (!this.dirty) return
+    this.dirty = false
+    try {
+      const dir = path.dirname(this.filePath)
+      fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(
+        this.filePath,
+        JSON.stringify({ entries: this.entries, updatedAt: new Date().toISOString() }, null, 2)
+      )
+    } catch {
+      // Best-effort in exit handler
+    }
+  }
+  
   private async load(): Promise<void> {
     if (this.loaded) return
     try {
@@ -285,6 +298,13 @@ export class FileLearningStore implements LearningStore {
   }
 
   async clear(): Promise<void> {
+    // Cancel any pending debounced save — prevents stale data being written
+    // after clear() resets state
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    this.dirty   = false
     this.entries = []
     this.learningIndex.reset()
     await this.save()

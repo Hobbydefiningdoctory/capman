@@ -1,6 +1,10 @@
 import { logger } from './logger'
 import type { MatchResult, ResolveResult, ApiResolver, NavResolver, ApiCallResult } from './types'
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
 // ─── Privacy enforcement ──────────────────────────────────────────────────────
 
 export interface AuthContext {
@@ -212,7 +216,6 @@ async function resolveApi(
   // ── Fetch with retry + timeout (iterative — no recursion) ────────────────
       // Only retry safe/idempotent methods — retrying POST/PUT/PATCH/DELETE
       // can cause duplicate side effects (e.g. duplicate orders, double charges).
-        const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
         async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
           const effectiveRetries = (options.retryAllMethods || SAFE_METHODS.has(call.method))
@@ -322,12 +325,8 @@ function validateApiPathParam(key: string, value: string): void {
   }
 }
 
-// Note: buildUrl does not validate param values against an allowlist.
-// resolveNav() does validate via validateNavParam() because nav destinations
-// are used as deep links where path traversal is a real risk.
-// For API URLs, extractParams() strips most dangerous characters upstream,
-// so the practical risk is low — but any future caller bypassing extractParams
-// should add validation here too.
+// Both buildUrl (API) and resolveNav (nav) validate path param values against
+// an allowlist before substitution — prevents path traversal via unencoded slashes.
 function buildUrl(
   baseUrl: string,
   urlPath: string,

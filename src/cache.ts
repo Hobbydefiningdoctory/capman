@@ -99,7 +99,6 @@ const FILE_CACHE_MAX = 2048
 export class FileCache implements CacheStore {
   private filePath:    string
   private store:       Map<string, CacheEntry> = new Map()
-  private loaded:      boolean                 = false
   private loadPromise: Promise<void> | null    = null
   private saveQueue:   Promise<void>           = Promise.resolve()
 
@@ -144,7 +143,6 @@ export class FileCache implements CacheStore {
     } catch {
       // File doesn't exist yet — start fresh
     }
-  this.loaded = true
   }
 
   private save(): Promise<void> {

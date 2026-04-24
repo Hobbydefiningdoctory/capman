@@ -180,6 +180,8 @@ export interface EngineResult {
           )
         }
       } else if (options.manifest.version !== VERSION) {
+
+        //console.warn is used instead of logger.warn to avoid the warning being logged to the console
         console.warn(
           `[capman] Manifest version "${options.manifest.version}" could not be compared ` +
           `to engine version "${VERSION}" — version strings are not valid semver.`
