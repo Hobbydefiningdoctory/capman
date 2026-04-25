@@ -155,7 +155,7 @@ class LearningIndex {
 export class FileLearningStore implements LearningStore {
   private filePath:   string
   private entries:    LearningEntry[] = []
-  private loaded:     boolean         = false
+  private loadPromise: Promise<void> | null = null
   private saveQueue:  Promise<void>   = Promise.resolve()
   private learningIndex = new LearningIndex()
   private dirty:      boolean         = false
@@ -186,46 +186,76 @@ export class FileLearningStore implements LearningStore {
 }
 
   flushSync(): void {
+    // Cancel pending timer — prevents scheduleSave firing after sync write
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
     if (!this.dirty) return
     this.dirty = false
     try {
       const dir = path.dirname(this.filePath)
       fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(
-        this.filePath,
-        JSON.stringify({ entries: this.entries, updatedAt: new Date().toISOString() }, null, 2)
+      const tmp = `${this.filePath}.tmp`
+      const payload = JSON.stringify(
+        { entries: this.entries, updatedAt: new Date().toISOString() }, null, 2
       )
+      // Write to .tmp then rename — matches _doSave() pattern so they can't interleave
+      fs.writeFileSync(tmp, payload)
+      fs.renameSync(tmp, this.filePath)
     } catch {
       // Best-effort in exit handler
     }
   }
+
+  /**
+   * Removes this store from the exit flush registry and cancels any pending save timer.
+   * Call when the store is no longer needed to prevent memory leaks in long-running servers.
+   */
+  destroy(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = null
+    }
+    if (this.dirty) {
+      this.dirty = false
+      this.save()  // flush any pending data before destroying
+    }
+    activeStores.delete(this)
+  }
   
-  private async load(): Promise<void> {
-    if (this.loaded) return
+  private load(): Promise<void> {
+    if (!this.loadPromise) {
+      this.loadPromise = this._doLoad()
+    }
+    return this.loadPromise
+  }
+
+  private async _doLoad(): Promise<void> {
     try {
       const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
       const parsed = JSON.parse(raw)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
-          this.entries = parsed.entries
-          this.learningIndex.rebuild(this.entries)
-          logger.debug(`Learning store loaded: ${this.entries.length} entries`)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
+        this.entries = parsed.entries
+        this.learningIndex.rebuild(this.entries)
+        logger.debug(`Learning store loaded: ${this.entries.length} entries`)
       } else {
         logger.warn(`Learning store at ${this.filePath} contained unexpected format — starting fresh`)
       }
     } catch {
       // File doesn't exist yet — start fresh
     }
-    this.loaded = true
   }
 
   private scheduleSave(urgencyMs = 5_000): void {
     this.dirty = true
     if (!this.saveTimer) {
-      this.saveTimer = setTimeout(async () => {
+      this.saveTimer = setTimeout(() => {
         this.saveTimer = null
         if (this.dirty) {
           this.dirty = false
-          await this._doSave()
+          // Route through saveQueue — serializes with all other saves
+          this.save()
         }
       }, urgencyMs)
     }
@@ -313,37 +343,37 @@ export class FileLearningStore implements LearningStore {
 
 // ─── Memory Learning Store (for testing) ─────────────────────────────────────
 
-  export class MemoryLearningStore implements LearningStore {
-    private entries:      LearningEntry[]                        = []
-    private learningIndex = new LearningIndex()
+export class MemoryLearningStore implements LearningStore {
+  private entries:      LearningEntry[] = []
+  private learningIndex = new LearningIndex()
 
   async record(entry: LearningEntry): Promise<void> {
-      const sanitized: LearningEntry = {
-        ...entry,
-        query: entry.query
-          .toLowerCase()
-          .split(/\W+/)
-          .filter(w => w.length > 2 && !STOPWORDS.has(w))
-          .join(' '),
-      }
-      this.entries.push(sanitized)
-      this.learningIndex.update(sanitized)
-      if (this.entries.length > MAX_LEARNING_ENTRIES) {
-        const excess = this.entries.length - MAX_LEARNING_ENTRIES
-        const pruned = this.entries.splice(0, excess)
-        for (const entry of pruned) {
-          this.learningIndex.subtract(entry)
-        }
+    const sanitized: LearningEntry = {
+      ...entry,
+      query: entry.query
+        .toLowerCase()
+        .split(/\W+/)
+        .filter(w => w.length > 2 && !STOPWORDS.has(w))
+        .join(' '),
+    }
+    this.entries.push(sanitized)
+    this.learningIndex.update(sanitized)
+    if (this.entries.length > MAX_LEARNING_ENTRIES) {
+      const excess = this.entries.length - MAX_LEARNING_ENTRIES
+      const pruned = this.entries.splice(0, excess)
+      for (const entry of pruned) {
+        this.learningIndex.subtract(entry)
       }
     }
-  
+  }
+
   async getStats(): Promise<KeywordStats> {
-     return this.learningIndex.getStats()
-    }
+    return this.learningIndex.getStats()
+  }
 
   async getIndex(): Promise<Record<string, Record<string, number>>> {
     return this.learningIndex.getIndex()
-    }
+  }
 
   async getTopCapabilities(limit = 5): Promise<Array<{ id: string; hits: number }>> {
     return computeTopCapabilities(this.entries, limit)
