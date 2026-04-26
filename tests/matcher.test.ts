@@ -197,5 +197,56 @@ describe('match()', () => {
       expect(result.reasoning).toBe('No reasoning provided')
     })
   })
+
+  describe('example scoring', () => {
+    it('takes best example score not sum — quality beats quantity', () => {
+      const bloatedConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [
+          {
+            id: 'precise_cap',
+            name: 'Precise capability',
+            description: 'Shows articles in the news feed.',
+            examples: ['show me articles'],  // 1 perfect example
+            params: [],
+            returns: ['articles'],
+            resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/articles' }] },
+            privacy: { level: 'public' },
+          },
+          {
+            id: 'bloated_cap',
+            name: 'Bloated capability',
+            description: 'Displays content items in a feed view.',
+            examples: [
+              'view content',       // partial overlap
+              'display items',      // partial overlap
+              'browse feed',        // partial overlap
+              'list things',        // partial overlap
+              'open section',       // partial overlap
+              'see stuff',          // partial overlap
+              'check updates',      // partial overlap
+              'load more',          // partial overlap
+              'fetch data',         // partial overlap
+              'get results',        // partial overlap
+            ],
+            params: [],
+            returns: ['items'],
+            resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/items' }] },
+            privacy: { level: 'public' },
+          },
+        ],
+      }
+      const m = generate(bloatedConfig)
+      const result = match('show me articles', m)
+
+      // precise_cap has one perfect example — should win
+      expect(result.capability?.id).toBe('precise_cap')
+
+      // bloated_cap should not beat precise_cap despite having 10 examples
+      const bloated = result.candidates.find(c => c.capabilityId === 'bloated_cap')
+      const precise = result.candidates.find(c => c.capabilityId === 'precise_cap')
+      expect(precise!.score).toBeGreaterThan(bloated!.score)
+    })
+  })
   
 })

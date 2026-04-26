@@ -32,13 +32,19 @@ function scoreCapability(query: string, cap: Capability): number {
 
   const qWords = filterStopwords(q.split(/\W+/).filter(Boolean))
 
-  // Check examples — exact substring match is a strong signal
+  // Check examples — take the best single example match, not the sum.
+  // Accumulating across examples rewards bloated example lists over precise ones:
+  // 10 examples at 50% overlap = 300 points (clamped to 60) beats 1 perfect example at 60.
+  // Taking Math.max means quality of examples matters, not quantity.
+  let bestExampleScore = 0
   for (const example of cap.examples ?? []) {
     const exWords = filterStopwords(example.toLowerCase().split(/\s+/))
     if (exWords.length === 0) continue
     const overlap = exWords.filter(w => qWords.includes(w)).length
-    score += (overlap / exWords.length) * 60
+    const contribution = (overlap / exWords.length) * 60
+    bestExampleScore = Math.max(bestExampleScore, contribution)
   }
+  score += bestExampleScore
 
   // Check description words
   const descWords = filterStopwords(

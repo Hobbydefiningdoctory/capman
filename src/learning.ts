@@ -51,6 +51,12 @@ export interface LearningStore {
   getTopCapabilities(limit?: number): Promise<Array<{ id: string; hits: number }>>
   /** Returns the live keyword index without rebuilding — O(1) */
   getIndex(): Promise<Record<string, Record<string, number>>>
+  /**
+   * Removes this store from the exit flush registry and flushes any pending data.
+   * Call when the store is no longer needed to prevent memory leaks.
+   * Must be awaited — final flush is async.
+   */
+  destroy(): Promise<void>
 }
 
 // ─── Shared computation helpers ───────────────────────────────────────────────
@@ -212,14 +218,16 @@ export class FileLearningStore implements LearningStore {
    * Removes this store from the exit flush registry and cancels any pending save timer.
    * Call when the store is no longer needed to prevent memory leaks in long-running servers.
    */
-  destroy(): void {
+  async destroy(): Promise<void> {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
     if (this.dirty) {
       this.dirty = false
-      this.save()  // flush any pending data before destroying
+      // Await final flush before removing from registry —
+      // ensures data is written before the store becomes unreachable
+      await this.save()
     }
     activeStores.delete(this)
   }
@@ -380,10 +388,14 @@ export class MemoryLearningStore implements LearningStore {
   }
 
   async clear(): Promise<void> {
-    this.entries = []
-    this.learningIndex.reset()
+      this.entries = []
+      this.learningIndex.reset()
+    }
+
+    async destroy(): Promise<void> {
+      // No-op for memory store — nothing to flush or deregister
+    }
   }
-}
 
 
 
