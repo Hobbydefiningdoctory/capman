@@ -86,8 +86,11 @@ function scoreCapability(query: string, cap: Capability, fuzzyThreshold?: number
 
     const results = fuse.search(query)
     if (results.length > 0) {
-      // Fuse score: 0.0 = perfect match, 1.0 = no match — invert to 0-60
-      const fuseScore = (1 - (results[0].score ?? 1)) * 60
+      // Fuse score: 0.0 = perfect match, 1.0 = no match — invert to 0-100.
+      // Multiplier of 100 (not 60) lets fuzzy-only matches reach the
+      // standard 50% confidence threshold for reasonable typo similarity.
+      // Capped to 100 by the outer Math.min — keyword + fuzzy can never exceed 100.
+      const fuseScore = (1 - (results[0].score ?? 1)) * 100
       score = Math.max(score, fuseScore)
     }
   }
