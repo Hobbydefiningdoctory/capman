@@ -1,5 +1,6 @@
 import type { Manifest, Capability, MatchResult, MatchCandidate } from './types'
 import { logger } from './logger'
+import Fuse from 'fuse.js'
 
 // ─── Typed error for LLM parse failures ──────────────────────────────────────
 
@@ -26,7 +27,7 @@ function filterStopwords(words: string[]): string[] {
   return words.filter(w => !STOPWORDS.has(w.toLowerCase()) && w.length > 1)
 }
 
-function scoreCapability(query: string, cap: Capability): number {
+function scoreCapability(query: string, cap: Capability, fuzzyThreshold?: number): number {
   const q = query.toLowerCase()
   let score = 0
 
@@ -62,6 +63,33 @@ function scoreCapability(query: string, cap: Capability): number {
   if (nameWords.length > 0) {
     const nameOverlap = nameWords.filter(w => qWords.includes(w)).length
     score += (nameOverlap / nameWords.length) * 10
+  }
+
+  // ── Fuzzy scoring (optional) ──────────────────────────────────────────────
+  // When fuzzyThreshold is provided, run a Fuse.js pass against examples,
+  // description, and name. Takes Math.max with keyword score — fuzzy can
+  // only help, never hurt. Catches paraphrases, typos, morphological variants.
+  if (fuzzyThreshold !== undefined) {
+    const searchTargets = [
+      ...(cap.examples ?? []).map(e => ({ text: e, weight: 0.6 })),
+      { text: cap.description, weight: 0.3 },
+      { text: cap.name, weight: 0.1 },
+    ]
+
+    const fuse = new Fuse(searchTargets, {
+      keys: [{ name: 'text', weight: 1 }],
+      threshold: fuzzyThreshold,
+      includeScore: true,
+      ignoreLocation: true,
+      minMatchCharLength: 3,
+    })
+
+    const results = fuse.search(query)
+    if (results.length > 0) {
+      // Fuse score: 0.0 = perfect match, 1.0 = no match — invert to 0-60
+      const fuseScore = (1 - (results[0].score ?? 1)) * 60
+      score = Math.max(score, fuseScore)
+    }
   }
 
   return Math.min(Math.round(score), 100)
@@ -172,7 +200,16 @@ export function extractParams(query: string, cap: Capability): Record<string, st
   return result
 }
 
-export function match(query: string, manifest: Manifest): MatchResult {
+export interface MatchOptions {
+  fuzzyMatch?:     boolean
+  fuzzyThreshold?: number
+}
+
+export function match(
+  query: string,
+  manifest: Manifest,
+  options: MatchOptions = {}
+): MatchResult {
   if (!query?.trim()) {
     logger.warn('Empty query received')
     return {
@@ -195,7 +232,10 @@ export function match(query: string, manifest: Manifest): MatchResult {
   const allScores: Array<{ cap: Capability; score: number }> = []
 
   for (const cap of manifest.capabilities) {
-    const score = scoreCapability(query, cap)
+    const fuzzyThreshold = options.fuzzyMatch
+      ? (options.fuzzyThreshold ?? 0.4)
+      : undefined
+    const score = scoreCapability(query, cap, fuzzyThreshold)
     logger.debug(`  scored "${cap.id}": ${score}%`)
     allScores.push({ cap, score })
     if (score > bestScore) {

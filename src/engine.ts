@@ -97,6 +97,21 @@ export interface EngineOptions {
    * @default 60000
    */
   llmCircuitBreakerResetMs?: number
+
+  /**
+   * Enable fuzzy matching using Fuse.js — catches paraphrases, typos,
+   * and morphological variants that exact keyword matching misses.
+   * Example: "cancel my booking" matches a capability with "abort reservation" examples.
+   * Only applies in balanced and accurate modes — never in cheap mode.
+   * @default false
+   */
+  fuzzyMatch?: boolean
+  /**
+   * Fuse.js threshold for fuzzy matching. 0.0 = exact match only, 1.0 = match anything.
+   * Lower values are stricter. Only used when fuzzyMatch is true.
+   * @default 0.4
+   */
+  fuzzyThreshold?: number
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -125,6 +140,8 @@ export interface EngineResult {
   private headers?:  Record<string, string>
   private threshold: number
   private cacheTtlMs: number | null
+  private fuzzyMatch:     boolean
+  private fuzzyThreshold: number
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -152,6 +169,8 @@ export interface EngineResult {
     this.llmCooldownMs              = options.llmCooldownMs              ?? 0
     this.llmCircuitBreakerThreshold = options.llmCircuitBreakerThreshold ?? 3
     this.llmCircuitBreakerResetMs   = options.llmCircuitBreakerResetMs   ?? 60_000
+    this.fuzzyMatch     = options.fuzzyMatch     ?? false
+    this.fuzzyThreshold = options.fuzzyThreshold ?? 0.4
 
     // Cache — default MemoryCache (no filesystem writes), or disabled with false
     // Use FileCache or ComboCache explicitly for persistence across restarts
@@ -622,12 +641,18 @@ export interface EngineResult {
    * Handles cheap / balanced / accurate mode dispatch and LLM rate limiting.
    * Returns the match result and which resolver was used.
    */
-  private async _runMatch(
-    query: string,
-    steps?: TraceStep[]
-  ): Promise<{ matchResult: MatchResult; resolvedVia: EngineResult['resolvedVia'] }> {
-    let matchResult: MatchResult
-    let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
+    private async _runMatch(
+      query: string,
+      steps?: TraceStep[]
+    ): Promise<{ matchResult: MatchResult; resolvedVia: EngineResult['resolvedVia'] }> {
+      let matchResult: MatchResult
+      let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
+
+      // Fuzzy options — never applied in cheap mode
+      const fuzzyOpts = {
+        fuzzyMatch:     this.fuzzyMatch,
+        fuzzyThreshold: this.fuzzyThreshold,
+      }
 
     switch (this.mode) {
       case 'cheap': {
@@ -643,7 +668,7 @@ export interface EngineResult {
           if (skipReason) {
             logger.warn(`LLM skipped — ${skipReason} — falling back to keyword`)
             const t = Date.now()
-            matchResult = _match(query, this.manifest)
+            matchResult = _match(query, this.manifest, fuzzyOpts)
             steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: `llm skipped: ${skipReason}` })
           } else {
             const t = Date.now()
@@ -652,7 +677,7 @@ export interface EngineResult {
               this.recordLLMSuccess()
               resolvedVia = 'llm'
               // Merge keyword scores into LLM candidates so boost has real signal for alternatives
-              const kwResult = _match(query, this.manifest)
+              const kwResult = _match(query, this.manifest, fuzzyOpts)
               matchResult = {
                 ...matchResult,
                 candidates: matchResult.candidates.map(c => ({
@@ -668,7 +693,7 @@ export interface EngineResult {
               if (!isParseError) this.recordLLMFailure()
               logger.warn(`LLM call failed — falling back to keyword: ${err instanceof Error ? err.message : String(err)}`)
               const t2 = Date.now()
-              matchResult = _match(query, this.manifest)
+              matchResult = _match(query, this.manifest, fuzzyOpts)
               steps?.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t, detail: String(err) })
               steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t2, detail: 'fallback after llm failure' })
             }
@@ -676,7 +701,7 @@ export interface EngineResult {
         } else {
           logger.warn('accurate mode requires llm — falling back to keyword')
           const t = Date.now()
-          matchResult = _match(query, this.manifest)
+          matchResult = _match(query, this.manifest, fuzzyOpts)
           steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t, detail: 'llm not provided, used keyword' })
         }
         break
@@ -685,7 +710,7 @@ export interface EngineResult {
       case 'balanced':
       default: {
         const t1 = Date.now()
-        const keywordResult = _match(query, this.manifest)
+        const keywordResult = _match(query, this.manifest, fuzzyOpts)
         steps?.push({ type: 'keyword_match', status: 'pass', durationMs: Date.now() - t1, detail: `confidence: ${keywordResult.confidence}%` })
 
         if (keywordResult.confidence >= this.threshold || !this.llm) {

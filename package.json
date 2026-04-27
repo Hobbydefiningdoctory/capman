@@ -29,15 +29,15 @@
     "CODEBASE.md"
   ],
   "scripts": {
-    "prebuild":   "node scripts/version.js",
-    "build:cjs":  "tsc --project tsconfig.json",
-    "build:esm":  "tsc --project tsconfig.esm.json",
-    "build":      "pnpm run build:cjs && pnpm run build:esm",
-    "dev":        "tsc --watch",
-    "example":    "tsx examples/basic.ts",
-    "validate":   "node bin/capman.js validate",
-    "inspect":    "node bin/capman.js inspect",
-    "test":       "vitest run"
+    "prebuild": "node scripts/version.js",
+    "build:cjs": "tsc --project tsconfig.json",
+    "build:esm": "tsc --project tsconfig.esm.json",
+    "build": "pnpm run build:cjs && pnpm run build:esm",
+    "dev": "tsc --watch",
+    "example": "tsx examples/basic.ts",
+    "validate": "node bin/capman.js validate",
+    "inspect": "node bin/capman.js inspect",
+    "test": "vitest run"
   },
   "keywords": [
     "ai",
@@ -56,6 +56,7 @@
   },
   "dependencies": {
     "dotenv": "^17.3.1",
+    "fuse.js": "^7.3.0",
     "zod": "^3.23.0"
   }
 }

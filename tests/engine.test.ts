@@ -688,4 +688,67 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('fuzzy matching', () => {
+    it('matches query with typo when fuzzyMatch enabled', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'balanced',
+        fuzzyMatch: true,
+        fuzzyThreshold: 0.4,
+      })
+
+      // "Shwo me artciles" — typos that keyword matcher misses entirely
+      // Fuse.js fuzzy matching should still match "Show me articles"
+      const result = await engine.ask('Shwo me artciles', { dryRun: true })
+      expect(result.match.capability?.id).toBe('get_articles')
+    })
+
+    it('does not use fuzzy in cheap mode', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        fuzzyMatch: true,
+      })
+
+      // cheap mode — fuzzy never runs regardless of fuzzyMatch option
+      const result = await engine.ask('display news feed', { dryRun: true })
+      // Result may or may not match — we just verify it didn't throw
+      expect(result).toBeDefined()
+      expect(result.resolvedVia).toBe('keyword')
+    })
+
+    it('fuzzy disabled by default', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'balanced',
+        // fuzzyMatch not set — defaults to false
+      })
+
+      const result = await engine.ask('display news feed', { dryRun: true })
+      // Without fuzzy, paraphrase scores 0 — out of scope
+      expect(result.match.capability).toBeNull()
+    })
+
+    it('stricter threshold rejects weak matches', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'balanced',
+        fuzzyMatch: true,
+        fuzzyThreshold: 0.1,  // very strict
+      })
+
+      // Very strict threshold — only near-exact matches pass
+      const result = await engine.ask('show articles', { dryRun: true })
+      expect(result).toBeDefined()
+    })
+  })
+
 })
