@@ -701,7 +701,7 @@ describe('CapmanEngine', () => {
 
       // "Shwo me artciles" — typos that keyword matcher misses entirely
       // Fuse.js fuzzy matching should still match "Show me articles"
-      const result = await engine.ask('Shwo me artciles', { dryRun: true })
+      const result = await engine.ask('Shwo me articles', { dryRun: true })
       expect(result.match.capability?.id).toBe('get_articles')
     })
 

@@ -27,7 +27,7 @@ function filterStopwords(words: string[]): string[] {
   return words.filter(w => !STOPWORDS.has(w.toLowerCase()) && w.length > 1)
 }
 
-function scoreCapability(query: string, cap: Capability, fuzzyThreshold?: number): number {
+function scoreCapability(query: string, cap: Capability): number {
   const q = query.toLowerCase()
   let score = 0
 
@@ -63,36 +63,6 @@ function scoreCapability(query: string, cap: Capability, fuzzyThreshold?: number
   if (nameWords.length > 0) {
     const nameOverlap = nameWords.filter(w => qWords.includes(w)).length
     score += (nameOverlap / nameWords.length) * 10
-  }
-
-  // ── Fuzzy scoring (optional) ──────────────────────────────────────────────
-  // When fuzzyThreshold is provided, run a Fuse.js pass against examples,
-  // description, and name. Takes Math.max with keyword score — fuzzy can
-  // only help, never hurt. Catches paraphrases, typos, morphological variants.
-  if (fuzzyThreshold !== undefined) {
-    const searchTargets = [
-      ...(cap.examples ?? []).map(e => ({ text: e, weight: 0.6 })),
-      { text: cap.description, weight: 0.3 },
-      { text: cap.name, weight: 0.1 },
-    ]
-
-    const fuse = new Fuse(searchTargets, {
-      keys: [{ name: 'text', weight: 1 }],
-      threshold: fuzzyThreshold,
-      includeScore: true,
-      ignoreLocation: true,
-      minMatchCharLength: 3,
-    })
-
-    const results = fuse.search(query)
-    if (results.length > 0) {
-      // Fuse score: 0.0 = perfect match, 1.0 = no match — invert to 0-100.
-      // Multiplier of 100 (not 60) lets fuzzy-only matches reach the
-      // standard 50% confidence threshold for reasonable typo similarity.
-      // Capped to 100 by the outer Math.min — keyword + fuzzy can never exceed 100.
-      const fuseScore = (1 - (results[0].score ?? 1)) * 100
-      score = Math.max(score, fuseScore)
-    }
   }
 
   return Math.min(Math.round(score), 100)
@@ -232,14 +202,43 @@ export function match(
   let best: Capability | null = null
   let bestScore = 0
 
-  const allScores: Array<{ cap: Capability; score: number }> = []
+  // ── Build Fuse index once per match() call (not per capability) ───────────
+  // Single index over all capabilities — correct key-level weighting applied.
+  // Constructed only when fuzzyMatch is enabled to avoid overhead.
+  let fuseScoreMap = new Map<string, number>()
+  if (options.fuzzyMatch) {
+    const corpus = manifest.capabilities.map(cap => ({
+      id:          cap.id,
+      examples:    (cap.examples ?? []).join(' '),
+      description: cap.description,
+      name:        cap.name,
+    }))
 
+    const fuse = new Fuse(corpus, {
+      keys: [
+        { name: 'examples',    weight: 0.6 },
+        { name: 'description', weight: 0.3 },
+        { name: 'name',        weight: 0.1 },
+      ],
+      threshold:        options.fuzzyThreshold ?? 0.4,
+      includeScore:     true,
+      ignoreLocation:   true,
+      minMatchCharLength: 3,
+    })
+
+    const fuseResults = fuse.search(query)
+    fuseScoreMap = new Map(
+      fuseResults.map(r => [r.item.id, (1 - (r.score ?? 1)) * 100])
+    )
+  }
+
+  // ── Score all capabilities ────────────────────────────────────────────────
+  const allScores: Array<{ cap: Capability; score: number }> = []
   for (const cap of manifest.capabilities) {
-    const fuzzyThreshold = options.fuzzyMatch
-      ? (options.fuzzyThreshold ?? 0.4)
-      : undefined
-    const score = scoreCapability(query, cap, fuzzyThreshold)
-    logger.debug(`  scored "${cap.id}": ${score}%`)
+    const keywordScore = scoreCapability(query, cap)
+    const fuzzyScore   = fuseScoreMap.get(cap.id) ?? 0
+    const score        = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))
+    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%)` )
     allScores.push({ cap, score })
     if (score > bestScore) {
       bestScore = score
@@ -270,13 +269,17 @@ export function match(
   logger.info(`Matched "${best.id}" at ${bestScore}% confidence`)
   logger.debug(`Extracted params: ${JSON.stringify(Object.fromEntries(Object.entries(params).map(([k, v]) => [k, v != null ? '[REDACTED]' : 'null'])))}`)
 
+  const winner = (fuseScoreMap.get(best.id) ?? 0) > scoreCapability(query, best)
+    ? 'fuzzy match'
+    : 'keyword scoring'
+  
   // Matched return:
   return {
     capability: best,
     confidence: bestScore,
     intent: resolverToIntent(best),
     extractedParams: params,
-    reasoning: `Matched "${best.id}" via keyword scoring (score: ${bestScore})`,
+    reasoning: `Matched "${best.id}" via ${winner} (score: ${bestScore})`,
     candidates,
   }
 }
