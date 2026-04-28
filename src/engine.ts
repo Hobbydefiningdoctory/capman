@@ -186,27 +186,7 @@ export interface EngineResult {
 
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
     // ── Manifest version compatibility check ─────────────────────────────────
-    if (options.manifest.version) {
-      const SEMVER_RE = /^\d+\.\d+\.\d+$/
-      if (SEMVER_RE.test(options.manifest.version) && SEMVER_RE.test(VERSION)) {
-        const [mMaj, mMin] = options.manifest.version.split('.').map(Number)
-        const [eMaj, eMin] = VERSION.split('.').map(Number)
-        if (mMaj !== eMaj || mMin !== eMin) {
-          console.warn(
-            `[capman] Manifest version "${options.manifest.version}" was generated with a ` +
-            `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
-            `If you experience unexpected matching issues, regenerate with: npx capman generate`
-          )
-        }
-      } else if (options.manifest.version !== VERSION) {
-
-        //console.warn is used instead of logger.warn to avoid the warning being logged to the console
-        console.warn(
-          `[capman] Manifest version "${options.manifest.version}" could not be compared ` +
-          `to engine version "${VERSION}" — version strings are not valid semver.`
-        )
-      }
-    }
+    this.checkManifestVersion(options.manifest)
   }
 
   /**
@@ -220,7 +200,7 @@ export interface EngineResult {
    * console.log(result.resolution.apiCalls)   // [{ url: '...', method: 'GET' }]
    * console.log(result.resolvedVia)           // 'keyword' | 'llm' | 'cache'
    */
-    async ask(query: string, overrides: Partial<ResolveOptions> = {}): Promise<EngineResult> {
+  async ask(query: string, overrides: Partial<ResolveOptions> = {}): Promise<EngineResult> {
     if (!query || typeof query !== 'string') {
       throw new TypeError('query must be a non-empty string')
     }
@@ -399,6 +379,45 @@ export interface EngineResult {
     if (this.cache) await this.cache.clear()
   }
 
+  private checkManifestVersion(manifest: Manifest): void {
+      if (!manifest.version) return
+      const SEMVER_RE = /^\d+\.\d+\.\d+$/
+      if (SEMVER_RE.test(manifest.version) && SEMVER_RE.test(VERSION)) {
+        const [mMaj, mMin] = manifest.version.split('.').map(Number)
+        const [eMaj, eMin] = VERSION.split('.').map(Number)
+        if (mMaj !== eMaj || mMin !== eMin) {
+          console.warn(
+            `[capman] Manifest version "${manifest.version}" was generated with a ` +
+            `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
+            `If you experience unexpected matching issues, regenerate with: npx capman generate`
+          )
+        }
+      } else if (manifest.version !== VERSION) {
+        console.warn(
+          `[capman] Manifest version "${manifest.version}" could not be compared ` +
+          `to engine version "${VERSION}" — version strings are not valid semver.`
+        )
+      }
+    }
+
+    /**
+     * Replaces the active manifest without creating a new engine instance.
+     * Useful for hot-reloading manifests in long-running servers without
+     * losing cache, learning history, or rate limiter state.
+     *
+     * Note: clears the cache automatically — cached results from the old
+     * manifest are no longer valid after the manifest changes.
+     *
+     * @example
+     * const newManifest = generate(updatedConfig)
+     * await engine.loadManifest(newManifest)
+     */
+  async loadManifest(manifest: Manifest): Promise<void> {
+      this.checkManifestVersion(manifest)
+      this.manifest = manifest
+      await this.clearCache()
+    }
+
   /**
    * Explain what would happen for a query — without executing it.
    * Shows matched capability, all candidate scores with reasoning,
@@ -417,7 +436,7 @@ export interface EngineResult {
    * console.log(explanation.candidates)
    */
   
-    async explain(query: string): Promise<ExplainResult> {
+   async explain(query: string): Promise<ExplainResult> {
     if (!query || typeof query !== 'string') {
       throw new TypeError('query must be a non-empty string')
     }

@@ -7,7 +7,13 @@ const fs   = require('fs')
 
 const args    = process.argv.slice(2)
 const command = args[0]
-const flags   = args.slice(1)
+
+// POSIX -- sentinel support — everything after -- is a positional argument,
+// not a flag. Allows queries that start with -- or contain flag-like strings.
+// e.g. capman run -- "--help me find orders"
+const sentinelIdx = args.indexOf('--')
+const flags   = sentinelIdx !== -1 ? args.slice(1, sentinelIdx) : args.slice(1)
+const posArgs = sentinelIdx !== -1 ? args.slice(sentinelIdx + 1) : []
 
 const getFlag = (name) => {
   const i = flags.indexOf(name)
@@ -74,4 +80,4 @@ function requireSrc() {
   process.exit(1)
 }
 
-module.exports = { args, command, flags, getFlag, c, log, header, requireSrc }
+module.exports = { args, command, flags, getFlag, c, log, header, posArgs, requireSrc }

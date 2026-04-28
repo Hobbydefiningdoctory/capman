@@ -751,4 +751,54 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('loadManifest', () => {
+    it('swaps manifest without losing learning history', async () => {
+      const learning = new MemoryLearningStore()
+      const engine   = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning,
+        mode: 'cheap',
+      })
+
+      // Build some learning history
+      await engine.ask('Show me articles', { dryRun: true })
+      const statsBefore = await engine.getStats()
+      expect(statsBefore?.totalQueries).toBe(1)
+
+      // Swap manifest
+      const newManifest = generate({
+        ...manifest,
+        app: 'updated-app',
+      })
+      await engine.loadManifest(newManifest)
+
+      // Learning history preserved
+      const statsAfter = await engine.getStats()
+      expect(statsAfter?.totalQueries).toBe(1)
+
+      // New manifest is active
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result).toBeDefined()
+    })
+
+    it('clears cache when manifest is swapped', async () => {
+      const cache  = new MemoryCache()
+      const engine = new CapmanEngine({
+        manifest,
+        cache,
+        learning: false,
+        mode: 'cheap',
+      })
+
+      // Populate cache
+      await engine.ask('Show me articles', { dryRun: true })
+      expect(await cache.size()).toBe(1)
+
+      // Swap manifest — cache must be cleared
+      await engine.loadManifest(manifest)
+      expect(await cache.size()).toBe(0)
+    })
+  })
+
 })

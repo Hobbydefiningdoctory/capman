@@ -1,10 +1,10 @@
 'use strict'
 
-const { header, log, c, args, flags, getFlag, requireSrc } = require('./shared')
+const { header, log, c, args, posArgs, flags, getFlag, requireSrc } = require('./shared')
 
 module.exports = function cmdRun() {
   header()
-  const query = args[1]
+  const query = posArgs[0] ?? args[1]
   const debug = flags.includes('--debug')
   const manifestPath = getFlag('--manifest') ?? 'manifest.json'
 
