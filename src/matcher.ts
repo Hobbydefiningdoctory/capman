@@ -202,44 +202,60 @@ export function match(
   let best: Capability | null = null
   let bestScore = 0
 
-  // ── Build Fuse index once per match() call (not per capability) ───────────
-  // Single index over all capabilities — correct key-level weighting applied.
-  // Constructed only when fuzzyMatch is enabled to avoid overhead.
-  let fuseScoreMap = new Map<string, number>()
+  // ── Build Fuse index once per match() call ────────────────────────────────
+  // Flat corpus — each example/description/name is its own searchable record,
+  // tagged with the owning capability id. This avoids two pitfalls of using
+  // Fuse's multi-key mode here:
+  //   (1) joining examples into one string dilutes single-example matches,
+  //   (2) multi-key weighted aggregation mixes good and bad field matches
+  //       when we actually want the best single match across all fields.
+  // After searching, we group hits by capability and take the BEST score.
+  // Field prioritization (examples > description > name) is already applied
+  // by the keyword scorer (60/30/10 weights in scoreCapability), so fuzzy
+  // here is a pure similarity signal.
+  const fuzzyScoreMap = new Map<string, number>()
   if (options.fuzzyMatch) {
-    const corpus = manifest.capabilities.map(cap => ({
-      id:          cap.id,
-      examples:    (cap.examples ?? []).join(' '),
-      description: cap.description,
-      name:        cap.name,
-    }))
+    type CorpusEntry = { capabilityId: string; text: string }
+    const corpus: CorpusEntry[] = []
+    for (const cap of manifest.capabilities) {
+      for (const ex of cap.examples ?? []) {
+        if (ex?.trim()) corpus.push({ capabilityId: cap.id, text: ex })
+      }
+      if (cap.description?.trim()) corpus.push({ capabilityId: cap.id, text: cap.description })
+      if (cap.name?.trim())        corpus.push({ capabilityId: cap.id, text: cap.name })
+    }
 
-    const fuse = new Fuse(corpus, {
-      keys: [
-        { name: 'examples',    weight: 0.6 },
-        { name: 'description', weight: 0.3 },
-        { name: 'name',        weight: 0.1 },
-      ],
-      threshold:        options.fuzzyThreshold ?? 0.4,
-      includeScore:     true,
-      ignoreLocation:   true,
-      minMatchCharLength: 3,
-    })
+    if (corpus.length > 0) {
+      const fuse = new Fuse(corpus, {
+        keys: ['text'],
+        threshold:          options.fuzzyThreshold ?? 0.4,
+        includeScore:       true,
+        ignoreLocation:     true,
+        minMatchCharLength: 3,
+      })
 
-    const fuseResults = fuse.search(query)
-    fuseScoreMap = new Map(
-      fuseResults.map(r => [r.item.id, (1 - (r.score ?? 1)) * 100])
-    )
+      // Group hits by capability, keeping the best (lowest fuse score = highest similarity).
+      // Convert to 0-100 contribution: fuseScore 0.0 = 100%, fuseScore 1.0 = 0%.
+      // Multiplier 100 (not 60) lets a strong fuzzy match alone reach the standard
+      // 50% confidence cutoff for typo-only queries that have no keyword overlap.
+      for (const hit of fuse.search(query)) {
+        const capId = hit.item.capabilityId
+        const contribution = (1 - (hit.score ?? 1)) * 100
+        const existing = fuzzyScoreMap.get(capId) ?? 0
+        if (contribution > existing) fuzzyScoreMap.set(capId, contribution)
+      }
+    }
   }
 
   // ── Score all capabilities ────────────────────────────────────────────────
-  const allScores: Array<{ cap: Capability; score: number }> = []
+  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
   for (const cap of manifest.capabilities) {
     const keywordScore = scoreCapability(query, cap)
-    const fuzzyScore   = fuseScoreMap.get(cap.id) ?? 0
-    const score        = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))
-    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%)` )
-    allScores.push({ cap, score })
+    const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
+    const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
+    const score = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))
+    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%)`)
+    allScores.push({ cap, score, via })
     if (score > bestScore) {
       bestScore = score
       best = cap
@@ -253,7 +269,8 @@ export function match(
   }))
 
   if (!best || bestScore < 50) {
-    logger.info(`No match above threshold (best: ${bestScore}% for "${best?.id ?? 'none'}")`)
+    const bestId = best ? best.id : 'none'
+    logger.info(`No match above threshold (best: ${bestScore}% for "${bestId}")`)
     // Out of scope return:
     return {
       capability: null,
@@ -269,10 +286,10 @@ export function match(
   logger.info(`Matched "${best.id}" at ${bestScore}% confidence`)
   logger.debug(`Extracted params: ${JSON.stringify(Object.fromEntries(Object.entries(params).map(([k, v]) => [k, v != null ? '[REDACTED]' : 'null'])))}`)
 
-  const winner = (fuseScoreMap.get(best.id) ?? 0) > scoreCapability(query, best)
-    ? 'fuzzy match'
-    : 'keyword scoring'
-  
+  // Use the via tag tracked during scoring — avoids redundant scoreCapability call.
+  const bestEntry = allScores.find(s => s.cap.id === best.id)
+  const winner = bestEntry?.via === 'fuzzy' ? 'fuzzy match' : 'keyword scoring'
+
   // Matched return:
   return {
     capability: best,
