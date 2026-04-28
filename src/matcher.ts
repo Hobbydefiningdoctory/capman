@@ -11,7 +11,7 @@ export class LLMParseError extends Error {
   }
 }
 
-  export const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   'show', 'me', 'the', 'get', 'find', 'fetch', 'give', 'please',
   'can', 'you', 'i', 'want', 'to', 'a', 'an', 'my', 'our', 'your',
   'what', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -79,7 +79,6 @@ export function resolverToIntent(cap: Capability): MatchResult['intent'] {
 
 /**
  * Extracts parameter values from a user query using keyword heuristics.
- *
  * Known limits:
  * - Extracts single tokens only — "jane smith" would extract "jane"
  * - Keyword matching is positional — "articles from authors I follow"
