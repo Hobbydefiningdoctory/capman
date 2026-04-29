@@ -4,6 +4,21 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.4] — 2026-04-29
+### Added
+- `engine.loadManifest(manifest)` — hot-reloads the manifest without creating a new engine instance. Preserves cache, learning history, and rate limiter state. Clears cache automatically since cached results from the old manifest are no longer valid
+- `fuzzyMatch` and `fuzzyThreshold` options in `EngineOptions` — opt-in Fuse.js fuzzy matching catches typos, slight paraphrases, and morphological variants that exact keyword matching misses. Disabled by default, never runs in `cheap` mode
+- POSIX `--` sentinel support in CLI — `capman run -- "query"` and `capman explain -- "query"` now correctly handle queries that start with `--` or contain flag-like strings
+
+### Fixed
+- Example scoring now uses `Math.max` across examples instead of accumulating — a capability with 10 weak examples no longer beats one with a single precise example
+- Fuse.js index built once per `match()` call using a flat corpus — each example/description/name is its own searchable entry, grouped by capability after search. Avoids the dead-weight property bug and multi-key aggregation issues from the previous implementation
+
+### Tests
+- 97 tests passing (up from 91)
+
+---
+
 ## [0.5.3] — 2026-04-25
 ### Fixed
  

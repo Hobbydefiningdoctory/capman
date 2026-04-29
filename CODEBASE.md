@@ -84,9 +84,10 @@ Key exports:
 - `STOPWORDS` — set of words filtered from scoring and learning index
 
 Scoring algorithm (weights):
-- Examples: best single-example overlap score — up to 60 points (not accumulated across examples)
+- Examples: `Math.max` across all examples (best single match, up to 60 points),
 - Description match: up to 30 points
 - Name match: up to 10 points
+- When `fuzzyMatch` enabled, Fuse.js flat corpus scores merged via `Math.max` with keyword scores.
 
 Param extraction:
 - `isIdParam` — single token (e.g. `order_id=1234`)
@@ -175,6 +176,8 @@ The recommended API — orchestrates matching, caching, learning, and tracing.
 Key exports:
 - `CapmanEngine` class
 - `EngineOptions` — all constructor options
+- `fuzzyMatch` — enable Fuse.js fuzzy matching (default: false)
+- `fuzzyThreshold` — Fuse.js threshold 0.0–1.0 (default: 0.4)
 - `EngineResult` — `{ match, resolution, resolvedVia, durationMs, trace }`
 
 ⚠️ **Concurrency:** `CapmanEngine` is not safe for sharing across concurrent async request handlers. The LLM rate limiter, circuit breaker, and learning index cache are instance-level mutable state. Create one engine per request in server deployments, or use `cheap` mode for shared instances.
@@ -185,6 +188,7 @@ Key exports:
 - `getStats()` → `KeywordStats | null`
 - `getTopCapabilities(limit?)` → `Array<{ id, hits }>`
 - `clearCache()`
+- `loadManifest(manifest)` — hot-reloads manifest, clears cache, preserves learning and rate limiter state
 
 Matching pipeline in `ask()`:
 1. Cache check — return immediately on hit (public capabilities only)
@@ -251,9 +255,10 @@ Notable:
 Entry point only (~20 lines). Routes `command` to the correct module.
 
 ### `bin/lib/shared.js`
-Exports: `args`, `command`, `flags`, `getFlag`, `c`, `log`, `header`, `requireSrc`
+Exports: `args`, `command`, `flags`, `getFlag`, `c`, `log`, `header`, `posArgs`, `requireSrc`
 
 `getFlag(name)` — exits with error if flag is present but has no value (e.g. `--from` with no path).
+`posArgs` — positional arguments after POSIX `--` sentinel. Allows queries starting with `--` to be passed without flag interpretation
 
 ### `bin/lib/cmd-generate.js`
 Three generation paths: `--from` (OpenAPI), `--ai` (LLM-assisted), manual.
@@ -272,14 +277,14 @@ Contains `buildAIPrompt()` and `callLLM()`.
 
 ## tests/
 
-### `tests/matcher.test.ts` — 16 tests
-Keyword scoring, OOS detection, param extraction, LLM edge cases (hallucinated ID, undefined reasoning)
+### `tests/matcher.test.ts` — 17 tests
+Keyword scoring, OOS detection, param extraction, LLM edge cases (hallucinated ID, undefined reasoning), example scoring quality-over-quantity (Math.max)
 
-### `tests/resolver.test.ts` — 22 tests
-API/nav/hybrid resolvers, privacy enforcement, session injection, null params, nav open redirect
+### `tests/resolver.test.ts` — 27 tests
+API/nav/hybrid resolvers, privacy enforcement, session injection, null params, nav open redirect, API path param traversal rejection, multi-endpoint session param isolation, LRU cache eviction
 
-### `tests/engine.test.ts` — 33 tests
-`ask()`, `explain()`, caching, learning, matching modes, trace, rate limiting, manifest version check, learning boost
+### `tests/engine.test.ts` — 44 tests
+`ask()`, `explain()`, caching, learning, matching modes, trace, rate limiting, manifest version check, learning boost, query validation (TypeError/RangeError guards), LRU eviction, fuzzy matching (typos, cheap mode bypass, default disabled, strict threshold), `loadManifest()` hot-reload (cache cleared, learning preserved)
 
 ### `tests/parser.test.ts` — 9 tests
 OpenAPI capability extraction, privacy inference, param extraction, base URL, error handling

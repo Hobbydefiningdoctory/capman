@@ -10,8 +10,10 @@ module.exports = {
       "name": "Create Project",
       "description": "Allows users to create a new project with specified parameters.",
       "examples": [
-        "Create a project for Q1 Marketing",
-        "Start development project for new feature"
+        "Create a project",
+        "New project",
+        "Set up project",
+        "Start a project"
       ],
       "params": [
         {
