@@ -4,11 +4,11 @@ import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
 import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError } from './matcher'
-import { resolve as _resolve } from './resolver'
+import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
 import type { MatchMode } from './types'
-import { MemoryCache, normalizeQuery } from './cache'
+import { MemoryCache, normalizeQuery, buildCacheKey } from './cache'
 import { VERSION } from './version'
 
 // ─── Engine Options ───────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ export interface EngineResult {
 
 // ─── CapmanEngine ─────────────────────────────────────────────────────────────
 
-  export class CapmanEngine {
+export class CapmanEngine {
   /** Maximum allowed query length in characters. Queries exceeding this throw RangeError. */
   static readonly MAX_QUERY_LENGTH = 1000
   private manifest:  Manifest
@@ -265,19 +265,22 @@ export interface EngineResult {
     // ── Step 2: Match ────────────────────────────────────────────────────────
     let { matchResult, resolvedVia } = await this._runMatch(query, steps)
 
-    const preBoostMatchResult = matchResult  // kept for learning recording only — prevents feedback loop
+    // Shallow copy with candidates slice — not a reference alias.
+    // applyBoostToMatchResult() returns a new object today, but an explicit
+    // copy makes the invariant clear and safe against future in-place mutation.
+    const preBoostMatchResult = { ...matchResult, candidates: matchResult.candidates.slice() }
 
     // ── Step 2.5: Apply learning boost ───────────────────────────────────────
-    matchResult = await this.applyBoostToMatchResult(query, matchResult)
+    matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
     // ── Step 3: Privacy check ────────────────────────────────────────────────
     if (matchResult.capability) {
-      const privacyLevel = matchResult.capability.privacy.level
+      const privacyError = checkPrivacy(matchResult.capability, this.auth)
       steps.push({
-        type: 'privacy_check',
-        status: 'pass',
+        type:      'privacy_check',
+        status:    privacyError ? 'fail' : 'pass',
         durationMs: 0,
-        detail: `level: ${privacyLevel}`,
+        detail:    privacyError ?? `level: ${matchResult.capability.privacy.level}`,
       })
     }
     
@@ -296,15 +299,23 @@ export interface EngineResult {
     })
 
     // ── Step 5: Cache after successful resolution ────────────────────────────
-    // Only cache when resolution succeeded — a failed resolution (network error,
-    // auth failure, bad params) must not poison the cache. A cached failed match
-    // would cause every subsequent cache hit to attempt the same failing resolution
-    // until TTL expires.
+    // Write under two keys:
+    // 1. normalizeQuery — exact phrasing lookup for this query
+    // 2. buildCacheKey — semantic key (capability + params) so differently-phrased
+    //    queries that resolve to the same capability share a cache entry
     if (this.cache && resolution.success && matchResult.capability
-       && matchResult.capability.privacy.level === 'public') {
-       const queryKey = normalizeQuery(query)
-       await this.cache.set(queryKey, matchResult)
+        && matchResult.capability.privacy.level === 'public') {
+      const queryKey = normalizeQuery(query)
+      const capKey   = buildCacheKey(
+        query,
+        matchResult.capability.id,
+        matchResult.extractedParams as Record<string, string | null>
+      )
+      await this.cache.set(queryKey, matchResult)
+      if (capKey !== queryKey) {
+        await this.cache.set(capKey, matchResult)
       }
+    }
 
     // ── Step 6: Build reasoning array ────────────────────────────────────────
     const reasoning: string[] = []
@@ -413,10 +424,14 @@ export interface EngineResult {
      * await engine.loadManifest(newManifest)
      */
   async loadManifest(manifest: Manifest): Promise<void> {
-      this.checkManifestVersion(manifest)
-      this.manifest = manifest
-      await this.clearCache()
-    }
+    this.checkManifestVersion(manifest)
+    this.manifest = manifest
+    await this.clearCache()
+    // Note: LLM rate limiter state (llmCallsThisMinute, llmConsecutiveFails,
+    // llmCircuitOpenAt) is intentionally preserved across manifest reloads.
+    // The LLM provider has not changed, so circuit breaker state remains valid.
+    // If you need a clean rate limiter state, create a new CapmanEngine instance.
+  }
 
   /**
    * Explain what would happen for a query — without executing it.
@@ -457,7 +472,7 @@ export interface EngineResult {
       let resolvedVia = _resolvedVia as ExplainResult['resolvedVia']
 
     // ── Apply learning boost (same as ask()) ─────────────────────────────────
-    matchResult = await this.applyBoostToMatchResult(query, matchResult)
+     matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
     // ── Build candidate explanations ─────────────────────────────────────────
     const candidates: ExplainCandidate[] = matchResult.candidates
@@ -471,10 +486,10 @@ export interface EngineResult {
         } else if (c.score >= 90) {
           explanation = `Strong match (${c.score}%) — query closely matches examples`
         } else if (c.score >= 50) {
-          const qWords = query.toLowerCase().split(/\W+/).filter(Boolean)
+          const qWordSet = new Set(query.toLowerCase().split(/\W+/).filter(Boolean))
           const matchedWords = (cap?.examples ?? [])
             .flatMap(e => e.toLowerCase().split(/\s+/))
-            .filter(w => qWords.includes(w) && w.length > 2)
+            .filter(w => qWordSet.has(w) && w.length > 2)
           const unique = [...new Set(matchedWords)].slice(0, 3)
           explanation = unique.length
             ? `Matched keywords: ${unique.join(', ')} (${c.score}%)`
@@ -624,8 +639,11 @@ export interface EngineResult {
       this.llmWindowStart     = now
     }
 
+    if (this.maxLLMCallsPerMinute === 0) {
+      return 'LLM disabled — maxLLMCallsPerMinute is 0'
+    }
+
     if (this.llmCallsThisMinute >= this.maxLLMCallsPerMinute) {
-      // Recalculate elapsed after possible window reset above
       const resetIn = Math.ceil((60_000 - (now - this.llmWindowStart)) / 1000)
       return `rate limit reached (${this.maxLLMCallsPerMinute}/min) — resets in ${Math.max(0, resetIn)}s`
     }
@@ -647,6 +665,10 @@ export interface EngineResult {
    * Records a failed LLM call — may open the circuit breaker.
    */
   private recordLLMFailure(): void {
+    // Refund the rate-limit slot — the call failed so it shouldn't count
+    // against the per-minute quota. Without this, sustained failures
+    // exhaust the limit prematurely and silently degrade to keyword-only.
+    this.llmCallsThisMinute = Math.max(0, this.llmCallsThisMinute - 1)
     this.llmConsecutiveFails++
     if (this.llmConsecutiveFails >= this.llmCircuitBreakerThreshold) {
       this.llmCircuitOpenAt = Date.now()
@@ -683,6 +705,8 @@ export interface EngineResult {
 
       case 'accurate': {
         if (this.llm) {
+          // Rate limiter shared between ask() and explain() — explain() counts
+          // against the same quota since it makes real LLM calls.
           const skipReason = this.checkLLMAllowed()
           if (skipReason) {
             logger.warn(`LLM skipped — ${skipReason} — falling back to keyword`)
@@ -735,6 +759,8 @@ export interface EngineResult {
         if (keywordResult.confidence >= this.threshold || !this.llm) {
           matchResult = keywordResult
         } else {
+            // Rate limiter shared between ask() and explain() — explain() counts
+            // against the same quota since it makes real LLM calls.
           const skipReason = this.checkLLMAllowed()
           if (skipReason) {
             logger.warn(`LLM skipped — ${skipReason}`)
@@ -779,10 +805,15 @@ export interface EngineResult {
    * Applies learning boost to a MatchResult and returns the updated result.
    * Shared by ask() and explain() to avoid logic divergence.
    */
-  private async applyBoostToMatchResult(
-    query: string,
-    matchResult: MatchResult
-  ): Promise<MatchResult> {
+    private async applyBoostToMatchResult(
+      query:       string,
+      matchResult: MatchResult,
+      resolvedVia: EngineResult['resolvedVia'] = 'keyword'
+    ): Promise<MatchResult> {
+      // Skip boost when LLM matched with high confidence — learning signal is
+      // less reliable than a strong LLM result and could incorrectly override it.
+      // Threshold 80% leaves room for boost to help on borderline LLM matches.
+      if (resolvedVia === 'llm' && matchResult.confidence > 80) return matchResult
     const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
     if (!hasKeywordSignal || matchResult.candidates.length === 0 || !this.learning || this.mode === 'cheap') {
       return matchResult

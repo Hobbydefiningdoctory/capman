@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseOpenAPI } from '../src/parser'
+import * as fs   from 'fs'
+import * as path from 'path'
 
 const sampleSpec = {
   openapi: '3.0.0',
@@ -203,5 +205,39 @@ describe('parseOpenAPI()', () => {
   it('throws on missing file', async () => {
     await expect(parseOpenAPI('/nonexistent/path/spec.json'))
       .rejects.toThrow('Spec file not found')
+  })
+
+  it('does not classify manage/manager operations as admin', async () => {
+    const spec = {
+      openapi: '3.0.0',
+      info: { title: 'Test', version: '1.0.0' },
+      servers: [{ url: 'https://api.test.com' }],
+      paths: {
+        '/wishlist': {
+          post: {
+            operationId: 'manageWishlist',
+            summary: 'Manage user wishlist',
+            description: 'Add or remove items from the user wishlist.',
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+        '/admin/users': {
+          get: {
+            operationId: 'adminListUsers',
+            summary: 'List all users',
+            description: 'Admin endpoint to list all platform users.',
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    }
+    const tmp = path.join(process.cwd(), 'tmp-admin-test-spec.json')
+    fs.writeFileSync(tmp, JSON.stringify(spec))
+    let result: Awaited<ReturnType<typeof parseOpenAPI>>
+    try {
+      result = await parseOpenAPI(tmp)
+    } finally {
+      fs.unlinkSync(tmp)
+    }
   })
 })

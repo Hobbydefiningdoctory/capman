@@ -97,7 +97,15 @@ export function loadConfig(configPath?: string): CapmanConfig {
 }
 
 export function writeManifest(manifest: Manifest, outputPath = 'manifest.json'): string {
-  const resolved = path.resolve(process.cwd(), outputPath)
+  const cwd           = process.cwd()
+  const resolved      = path.resolve(cwd, outputPath)
+  const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
+  if (!resolved.startsWith(allowedPrefix)) {
+    throw new Error(
+      `writeManifest: output path "${outputPath}" resolves outside the working directory.\n` +
+      `Resolved: ${resolved}\nAllowed:  ${cwd}`
+    )
+  }
   fs.writeFileSync(resolved, JSON.stringify(manifest, null, 2))
   return resolved
 }

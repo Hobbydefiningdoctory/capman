@@ -418,6 +418,17 @@ describe('resolve()', () => {
       expect(result.error).toContain('invalid characters')
     })
 
+    it('allows dots and colons in nav params', async () => {
+      const matchResult = match('Take me to dashboard', manifest)
+      const result = await resolve(
+        matchResult,
+        { destination: 'v1:dashboard' },
+        { dryRun: true }
+      )
+      expect(result.success).toBe(true)
+      expect(result.navTarget).toBe('/v1%3Adashboard')
+    })
+    
     it('rejects API path params with path traversal characters', async () => {
       const matchResult = match('Find resource by ID', manifest)
       const result = await resolve(

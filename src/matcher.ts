@@ -27,11 +27,8 @@ function filterStopwords(words: string[]): string[] {
   return words.filter(w => !STOPWORDS.has(w.toLowerCase()) && w.length > 1)
 }
 
-function scoreCapability(query: string, cap: Capability): number {
-  const q = query.toLowerCase()
-  let score = 0
-
-  const qWords = filterStopwords(q.split(/\W+/).filter(Boolean))
+  function scoreCapability(qWordSet: Set<string>, cap: Capability): number {
+    let score = 0
 
   // Check examples — take the best single example match, not the sum.
   // Accumulating across examples rewards bloated example lists over precise ones:
@@ -41,19 +38,21 @@ function scoreCapability(query: string, cap: Capability): number {
   for (const example of cap.examples ?? []) {
     const exWords = filterStopwords(example.toLowerCase().split(/\s+/))
     if (exWords.length === 0) continue
-    const overlap = exWords.filter(w => qWords.includes(w)).length
+    const overlap = exWords.filter(w => qWordSet.has(w)).length
     const contribution = (overlap / exWords.length) * 60
     bestExampleScore = Math.max(bestExampleScore, contribution)
   }
   score += bestExampleScore
 
-  // Check description words
+  // Check description words — normalize against min(length, 10) to avoid
+  // penalizing rich documentation (many words = lower ratio) while also
+  // preventing single-word descriptions from maxing out on any match.
   const descWords = filterStopwords(
     cap.description.toLowerCase().split(/\W+/).filter(Boolean)
   )
   if (descWords.length > 0) {
-    const descOverlap = descWords.filter(w => qWords.includes(w)).length
-    score += (descOverlap / descWords.length) * 30
+    const descOverlap = descWords.filter(w => qWordSet.has(w)).length
+    score += Math.min((descOverlap / Math.min(descWords.length, 10)) * 30, 30)
   }
 
   // Check name words
@@ -61,7 +60,7 @@ function scoreCapability(query: string, cap: Capability): number {
     cap.name.toLowerCase().split(/\W+/).filter(Boolean)
   )
   if (nameWords.length > 0) {
-    const nameOverlap = nameWords.filter(w => qWords.includes(w)).length
+    const nameOverlap = nameWords.filter(w => qWordSet.has(w)).length
     score += (nameOverlap / nameWords.length) * 10
   }
 
@@ -76,17 +75,35 @@ export function resolverToIntent(cap: Capability): MatchResult['intent'] {
   return 'out_of_scope'
 }
 
+/**
+ * Strips characters that could break LLM prompt structure from
+ * capability field values before injection into the system prompt.
+ * Removes control characters, newlines, and delimiter-like sequences.
+ */
+function sanitizeForPrompt(value: string, maxLen: number): string {
+  return value
+    .replace(/[\r\n\t]/g, ' ')           // newlines → space
+    .replace(/---+/g, '—')               // horizontal rules → em dash
+    .replace(/^\s*[{}\[\]]/gm, ' ')      // leading braces/brackets → space
+    .replace(/\s+/g, ' ')                // collapse whitespace
+    .trim()
+    .slice(0, maxLen)
+}
 
 /**
  * Extracts parameter values from a user query using keyword heuristics.
+ *
  * Known limits:
  * - Extracts single tokens only — "jane smith" would extract "jane"
  * - Keyword matching is positional — "articles from authors I follow"
  *   may extract "authors" instead of nothing, since "from" is a keyword
- * - For complex or ambiguous queries, use matchWithLLM() which handles
- *   param extraction more accurately via the LLM prompt
+ * - Required param fallback grabs the last meaningful word — "list all
+ *   recent orders" may extract "orders" even with the denylist extended.
+ *   For precise extraction of complex queries, use matchWithLLM() which
+ *   handles param extraction via structured LLM prompt.
+ * - To support richer extraction patterns, add a `pattern` field to
+ *   CapabilityParam in a future version.
  */
-  
 export function extractParams(query: string, cap: Capability): Record<string, string | null> {
   const result: Record<string, string | null> = {}
   const q = query.toLowerCase()
@@ -246,10 +263,13 @@ export function match(
     }
   }
 
-  // ── Score all capabilities ────────────────────────────────────────────────
-  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
-  for (const cap of manifest.capabilities) {
-    const keywordScore = scoreCapability(query, cap)
+    // ── Score all capabilities ────────────────────────────────────────────────
+    // Build qWordSet once — O(1) lookups instead of O(n) Array.includes per word
+    const qWordSet = new Set(filterStopwords(query.toLowerCase().split(/\W+/).filter(Boolean)))
+
+    const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
+    for (const cap of manifest.capabilities) {
+      const keywordScore = scoreCapability(qWordSet, cap)
     const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
     const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
     const score = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))
@@ -307,13 +327,13 @@ export interface LLMMatcherOptions {
 /**
  * Matches a query to a capability using an LLM.
  *
- * ⚠️  SECURITY NOTE: Capability `description` and `examples` fields from the
- * manifest are injected verbatim into the LLM prompt (system portion).
- * In a solo deployment with a developer-controlled manifest this is safe.
- * If your manifest is generated from third-party OpenAPI specs, user-controlled
- * sources, or any external input, sanitize `description` and `examples` fields
- * before passing the manifest to this function — adversarial content in those
- * fields can influence LLM routing decisions.
+ * ⚠️  SECURITY NOTE: Capability fields are sanitized before injection into
+ * the LLM prompt (newlines stripped, delimiters neutralized, length capped).
+ * However, the current interface passes a single prompt string — it cannot
+ * provide true system/user message separation that some LLM APIs support.
+ * For maximum injection resistance in high-security deployments, use an LLM
+ * wrapper that maps the prompt to a proper system message, keeping user query
+ * data in the user turn only.
  */
 export async function matchWithLLM(
   query: string,
@@ -326,16 +346,20 @@ export async function matchWithLLM(
   const MAX_EXAMPLE_LEN = 100
 
   const manifestSummary = manifest.capabilities.map(c =>
-    `- ${c.id} (${c.resolver.type}): ${c.description.slice(0, MAX_DESC_LEN)}${c.description.length > MAX_DESC_LEN ? '…' : ''}${
+    `- ${c.id} (${c.resolver.type}): ${sanitizeForPrompt(c.description, MAX_DESC_LEN)}${
       c.examples?.length
-        ? `\n  examples: ${c.examples.slice(0, 2).map(e => e.slice(0, MAX_EXAMPLE_LEN)).join(', ')}`
+        ? `\n  examples: ${c.examples.slice(0, 2).map(e => sanitizeForPrompt(e, MAX_EXAMPLE_LEN)).join(', ')}`
         : ''
     }`
   ).join('\n')
 
-  const prompt = `You are an intent matcher for an AI agent system.
+  // Sanitize app name — strip newlines and control characters that could
+    // break the prompt structure or inject additional instructions.
+  const safeApp = sanitizeForPrompt(manifest.app, 100)
 
-App: ${manifest.app}
+    const prompt = `You are an intent matcher for an AI agent system.
+
+  App: ${safeApp}
 
 Available capabilities:
 ${manifestSummary}
@@ -400,7 +424,29 @@ ${JSON.stringify({ user_query: query })}
     capability,
     confidence:      llmConfidence,
     intent:          effectivelyOOS ? 'out_of_scope' : parsed.intent as MatchResult['intent'],
-    extractedParams: (parsed.extracted_params ?? {}) as Record<string, string | null>,
+    extractedParams: (() => {
+      // Validate extracted params against declared capability params.
+      // Rejects nested objects ("[object Object]" in URLs), unknown keys,
+      // and non-scalar values. For OOS results (capability === null),
+      // drops all params — correct since there's no capability to match against.
+      const rawParams  = (parsed.extracted_params ?? {}) as Record<string, unknown>
+      const validParams: Record<string, string | null> = {}
+      for (const param of capability?.params ?? []) {
+        const val = rawParams[param.name]
+        if (val === null || val === undefined) {
+          validParams[param.name] = null
+        } else if (typeof val === 'string') {
+          validParams[param.name] = val
+        } else if (typeof val === 'number' || typeof val === 'boolean') {
+          validParams[param.name] = String(val)
+        } else {
+          // Reject complex types (objects, arrays) — would produce "[object Object]" in URLs
+          logger.warn(`LLM returned non-scalar value for param "${param.name}" — dropping`)
+          validParams[param.name] = null
+        }
+      }
+      return validParams
+    })(),
     reasoning:       (parsed.reasoning as string) ?? 'No reasoning provided',
     candidates:      allCandidates,
   }

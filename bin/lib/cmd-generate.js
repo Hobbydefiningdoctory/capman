@@ -70,60 +70,72 @@ Rules:
 
 async function callLLM(provider, apiKey, prompt) {
   if (provider === 'anthropic') {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res  = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model:      'claude-sonnet-4-20250514',
         max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }],
+        messages:   [{ role: 'user', content: prompt }],
       }),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error?.message ?? res.statusText)
-    return data.content[0].text
+    const text = await res.text()
+    if (!res.ok) {
+      let msg = res.statusText
+      try { msg = JSON.parse(text).error?.message ?? msg } catch {}
+      throw new Error(`Anthropic API error: ${msg}`)
+    }
+    return JSON.parse(text).content[0].text
   }
 
   if (provider === 'openai') {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const res  = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type':  'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model:      'gpt-4o-mini',
         max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }],
+        messages:   [{ role: 'user', content: prompt }],
       }),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error?.message ?? res.statusText)
-    return data.choices[0].message.content
+    const text = await res.text()
+    if (!res.ok) {
+      let msg = res.statusText
+      try { msg = JSON.parse(text).error?.message ?? msg } catch {}
+      throw new Error(`OpenAI API error: ${msg}`)
+    }
+    return JSON.parse(text).choices[0].message.content
   }
 
   if (provider === 'openrouter') {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const res  = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type':  'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://github.com/Hobbydefiningdoctory/capman',
+        'HTTP-Referer':  'https://github.com/Hobbydefiningdoctory/capman',
       },
       body: JSON.stringify({
-        model: 'openai/gpt-oss-120b:free',
+        model:      'openai/gpt-oss-120b:free',
         max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }],
-        provider: { order: ['open-inference'], allow_fallbacks: true },
+        messages:   [{ role: 'user', content: prompt }],
+        provider:   { order: ['open-inference'], allow_fallbacks: true },
       }),
     })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error?.message ?? res.statusText)
-    return data.choices[0].message.content
+    const text = await res.text()
+    if (!res.ok) {
+      let msg = res.statusText
+      try { msg = JSON.parse(text).error?.message ?? msg } catch {}
+      throw new Error(`OpenRouter API error: ${msg}`)
+    }
+    return JSON.parse(text).choices[0].message.content
   }
 
   throw new Error(`Unknown provider: ${provider}`)
@@ -206,11 +218,15 @@ const fromFlag  = getFlag('--from')
       process.exit(1)
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.OPENAI_API_KEY ?? process.env.OPENROUTER_API_KEY
+    const apiKey =
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.OPENAI_API_KEY?.trim() ||
+    process.env.OPENROUTER_API_KEY?.trim() ||
+    null
     const provider =
-      process.env.ANTHROPIC_API_KEY  ? 'anthropic' :
-      process.env.OPENAI_API_KEY     ? 'openai' :
-      process.env.OPENROUTER_API_KEY ? 'openrouter' : null
+    process.env.ANTHROPIC_API_KEY?.trim() ? 'anthropic' :
+    process.env.OPENAI_API_KEY?.trim() ? 'openai' :
+    process.env.OPENROUTER_API_KEY?.trim() ? 'openrouter' : null
 
     if (!apiKey || !provider) {
       log.error('No LLM API key found.')

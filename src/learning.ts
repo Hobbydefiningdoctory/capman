@@ -8,12 +8,38 @@ import { STOPWORDS } from './matcher'
 // Module-level registry — tracks all active FileLearningStore instances
 // for process exit flushing. Handlers registered once to avoid accumulation.
 const activeStores = new Set<FileLearningStore>()
-let exitHandlersRegistered = false
+
+// Module-level handler references — stored so they can be removed
+// when all stores are destroyed. Never call process.exit() in a library.
+let exitHandler:    (() => void) | null = null
+let sigTermHandler: (() => void) | null = null
+let sigIntHandler:  (() => void) | null = null
 
 function flushAllStores(): void {
   for (const store of activeStores) {
     store.flushSync()
   }
+}
+
+function registerExitHandlers(): void {
+  if (exitHandler) return  // already registered
+  exitHandler    = flushAllStores
+  sigTermHandler = flushAllStores
+  sigIntHandler  = flushAllStores
+  process.on('exit',    exitHandler)
+  process.on('SIGTERM', sigTermHandler)
+  process.on('SIGINT',  sigIntHandler)
+}
+
+function unregisterExitHandlers(): void {
+  if (!exitHandler) return       // nothing registered
+  if (activeStores.size > 0) return  // other stores still active
+  process.off('exit',    exitHandler)
+  process.off('SIGTERM', sigTermHandler!)
+  process.off('SIGINT',  sigIntHandler!)
+  exitHandler    = null
+  sigTermHandler = null
+  sigIntHandler  = null
 }
 
 // ─── Learning Entry ───────────────────────────────────────────────────────────
@@ -183,12 +209,7 @@ export class FileLearningStore implements LearningStore {
 
   activeStores.add(this)
 
-  if (!exitHandlersRegistered) {
-    exitHandlersRegistered = true
-    process.on('exit', flushAllStores)
-    process.on('SIGTERM', () => { flushAllStores(); process.exit(0) })
-    process.on('SIGINT',  () => { flushAllStores(); process.exit(0) })
-  }
+    registerExitHandlers()
 }
 
   flushSync(): void {
@@ -225,16 +246,18 @@ export class FileLearningStore implements LearningStore {
     }
     if (this.dirty) {
       this.dirty = false
-      // Await final flush before removing from registry —
-      // ensures data is written before the store becomes unreachable
       await this.save()
     }
     activeStores.delete(this)
+    unregisterExitHandlers()  // remove handlers if no stores remain
   }
   
   private load(): Promise<void> {
     if (!this.loadPromise) {
-      this.loadPromise = this._doLoad()
+      this.loadPromise = this._doLoad().catch(err => {
+        this.loadPromise = null  // allow retry on next call
+        throw err
+      })
     }
     return this.loadPromise
   }
@@ -250,8 +273,12 @@ export class FileLearningStore implements LearningStore {
       } else {
         logger.warn(`Learning store at ${this.filePath} contained unexpected format — starting fresh`)
       }
-    } catch {
-      // File doesn't exist yet — start fresh
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'ENOENT') {
+        logger.warn(`Failed to load learning store from ${this.filePath} (${code ?? 'unknown error'}) — starting fresh`)
+      }
+      // ENOENT = file doesn't exist yet — expected on first run, no warning needed
     }
   }
 

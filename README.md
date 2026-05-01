@@ -227,6 +227,25 @@ const engine = new CapmanEngine({
 })
 ```
 
+### Fuzzy Matching
+
+Enable opt-in fuzzy matching to catch typos and slight paraphrases:
+
+```typescript
+const engine = new CapmanEngine({
+  manifest,
+  mode: 'balanced',
+  fuzzyMatch: true,       // enable Fuse.js fuzzy matching
+  fuzzyThreshold: 0.4,   // 0.0 = exact only, 1.0 = match anything (default: 0.4)
+})
+
+// Now catches typos: "Shwo me artciles" → matches "Show me articles"
+// Also catches near-matches Fuse.js considers similar
+```
+
+Fuzzy matching never runs in `cheap` mode. It is additive — fuzzy can only
+help a capability reach the confidence threshold, never hurt it.
+
 ---
 
 ## Caching + Learning
@@ -245,6 +264,28 @@ const stats = await engine.getStats()
 
 const top = await engine.getTopCapabilities(3)
 // [{ id: 'check_product_availability', hits: 58 }, ...]
+```
+
+---
+
+### Hot-reloading manifests
+
+Swap the manifest without creating a new engine instance — preserves cache,
+learning history, and rate limiter state:
+
+```typescript
+const newManifest = generate(updatedConfig)
+await engine.loadManifest(newManifest)
+// Cache is cleared automatically — stale entries from old manifest are gone
+```
+
+### Cleaning up
+
+Call `destroy()` on file-backed stores when done to flush pending data and
+deregister process exit handlers:
+
+```typescript
+await engine.learning?.destroy()
 ```
 
 ---
@@ -320,8 +361,6 @@ const result = await engine.ask('show my orders', {
 |---|---|
 | `user_query` | Extracted from the user's query |
 | `session` | Injected from `auth.userId` automatically |
-| `context` | Provided by the caller |
-| `static` | Fixed value, never changes |
 
 ---
 
@@ -337,8 +376,10 @@ const result = await engine.ask('show my orders', {
 **Current limits:**
 - Real-time infra status (is the server down?)
 - UI-only state with no API backing
-- Very ambiguous queries — use `mode: 'accurate'` with an LLM
-- Multi-instance deployments need Redis adapter (planned for v0.5)
+- Very ambiguous queries with no keyword signal — use `mode: 'accurate'` with an LLM, or enable `fuzzyMatch: true`
+- Multi-instance deployments: `FileCache` and `FileLearningStore` are single-instance only — concurrent writers will corrupt the file. Use separate instances per process or a shared Redis adapter
+- `FileLearningStore` saves are debounced — up to 5s of learning data could be lost on `SIGKILL` (not SIGTERM/SIGINT which are handled)
+- Parallel multi-endpoint capabilities: if one endpoint fails, side effects from successful endpoints cannot be rolled back. Use single-endpoint capabilities for operations requiring ordering or rollback
 
 ---
 

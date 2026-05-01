@@ -8,13 +8,16 @@ import type { CapmanConfig, Capability, CapabilityParam, HttpMethod } from './ty
 interface OpenAPISpec {
   openapi?: string
   swagger?: string
-  info:     { title: string; description?: string }
+  info:     { title: string; version?: string; description?: string }
   servers?: Array<{ url: string }>
-  host?:    string
+  host?:     string
   basePath?: string
+  schemes?:  string[]
   paths:    Record<string, PathItem>
-  components?: { securitySchemes?: Record<string, SecurityScheme> }
+  components?: { schemas?: Record<string, Schema>; securitySchemes?: Record<string, SecurityScheme> }
+  definitions?: Record<string, Schema>
   securityDefinitions?: Record<string, SecurityScheme>
+  security?: Array<Record<string, string[]>>
 }
 
 interface PathItem {
@@ -272,7 +275,7 @@ function extractParams(op: Operation): CapabilityParam[] {
     const source: CapabilityParam['source'] =
       p.in === 'path'  ? 'user_query' :
       p.in === 'query' ? 'user_query' :
-      'context'
+      'user_query'  // body/formData (Swagger 2.x) — treat as user_query
 
     params.push({
       name:        toSnakeCase(p.name),
@@ -318,13 +321,17 @@ function inferPrivacy(
   // Explicitly no security on this operation
   if (op.security !== undefined && op.security.length === 0) return 'public'
 
-  // Check operation tags for admin hints
-  const tags = (op.tags ?? []).map(t => t.toLowerCase())
-  if (tags.some(t => t.includes('admin') || t.includes('internal'))) return 'admin'
+  // Check operation tags for admin hints — word-boundary match only.
+  // Avoids false positives like 'manageWishlist', 'fileManager', 'managedService'
+  // being classified as admin when they are user-facing operations.
+  const ADMIN_PATTERN = /\b(admin|administrator|backoffice|back-office|internal|superuser)\b/i
+  const tags = op.tags ?? []
+  if (tags.some(t => ADMIN_PATTERN.test(t))) return 'admin'
 
-  // Check operation ID / summary for admin hints
+  // Check operation ID / summary — same word-boundary pattern.
+  // 'manage' alone is NOT an admin signal — too many user-facing ops use it.
   const hint = `${op.operationId ?? ''} ${op.summary ?? ''}`.toLowerCase()
-  if (hint.includes('admin') || hint.includes('manage') || hint.includes('internal')) {
+  if (ADMIN_PATTERN.test(hint)) {
     return 'admin'
   }
 
@@ -382,14 +389,19 @@ function extractBaseUrl(spec: OpenAPISpec): string {
   if (spec.servers?.length) {
     return spec.servers[0].url.replace(/\/$/, '')
   }
-  // Swagger 2.x
+  // Swagger 2.x — respect declared schemes, prefer https over http
   if (spec.host) {
-    const scheme = 'https'
-    const base = spec.basePath ?? ''
+    const schemes = spec.schemes ?? ['https']
+    const scheme  = schemes.includes('https') ? 'https' : schemes[0] ?? 'https'
+    const base    = spec.basePath ?? ''
     return `${scheme}://${spec.host}${base}`.replace(/\/$/, '')
   }
-  return 'https://api.your-app.com'
-}
+  logger.warn(
+      `No server URL found in spec — using placeholder "https://api.your-app.com". ` +
+      `Set baseUrl manually in the generated config before use.`
+    )
+    return 'https://api.your-app.com'
+  }
 
 function sanitizeAppName(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

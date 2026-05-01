@@ -41,7 +41,7 @@ function redactParams(params: Record<string, unknown>): Record<string, string> {
   )
 }
 
-function checkPrivacy(
+export function checkPrivacy(
   capability: import('./types').Capability,
   auth?: AuthContext
 ): string | null {
@@ -157,20 +157,26 @@ export async function resolve(
 }
 
 
-  /**
-   * Resolves an API capability by executing all configured endpoints.
-   *
-   * ⚠️  PARALLEL EXECUTION: All endpoints are fired simultaneously via Promise.all().
-   * If any endpoint fails, the entire result is marked as failed and partial results
-   * are discarded — but side effects from successful endpoints cannot be rolled back.
-   *
-   * Example: a capability with two endpoints [POST /reserve, POST /confirm] will
-   * fire both in parallel. If /confirm fails after /reserve succeeded, the reservation
-   * exists but the caller receives success: false with no indication that /reserve ran.
-   *
-   * For capabilities where ordering or rollback matters, define separate capabilities
-   * with single endpoints and orchestrate them at the application layer.
-   */
+/**
+ * Resolves an API capability by executing all configured endpoints.
+ *
+ * ⚠️  PARALLEL EXECUTION: All endpoints are fired simultaneously via Promise.all().
+ * If any endpoint fails, the entire result is marked as failed and partial results
+ * are discarded — but side effects from successful endpoints cannot be rolled back.
+ *
+ * Example: a capability with two endpoints [POST /reserve, POST /confirm] will
+ * fire both in parallel. If /confirm fails after /reserve succeeded, the reservation
+ * exists but the caller receives success: false with no indication that /reserve ran.
+ *
+ * For capabilities where ordering or rollback matters, define separate capabilities
+ * with single endpoints and orchestrate them at the application layer.
+ *
+ * Note: the current ResolveResult does not expose which endpoints succeeded and
+ * which failed in a partial failure scenario. If your use case requires this
+ * granularity, use separate single-endpoint capabilities and inspect each result.
+ * Full partial success reporting (partialSuccess, completedCalls, failedCalls)
+ * is planned for a future version.
+ */
 async function resolveApi(
   resolver: ApiResolver | Omit<ApiResolver, 'type'>,
   params: Record<string, unknown>,
@@ -291,10 +297,13 @@ async function resolveApi(
 }
 
 function validateNavParam(key: string, value: string): void {
-  if (!/^[a-zA-Z0-9_\-]+$/.test(value)) {
+  // Allowlist aligned with validateApiPathParam — permits dots, colons, @ for
+  // deep links (myapp://path), domain-qualified values (auth.tokens), and
+  // versioned routes (v1:resource). Rejects path separators and shell metacharacters.
+  if (!/^[a-zA-Z0-9_\-.:@]+$/.test(value)) {
     throw new Error(
       `Nav param "${key}" contains invalid characters: "${value}". ` +
-      `Only alphanumeric, hyphens, and underscores are allowed.`
+      `Only alphanumeric, hyphens, underscores, dots, colons, and @ are allowed.`
     )
   }
 }

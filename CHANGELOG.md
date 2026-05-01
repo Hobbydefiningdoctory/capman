@@ -4,6 +4,52 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.5.5] — 2026-05-01
+### Fixed
+
+**Critical:**
+- LLM rate-limit slot now refunded on failure — `recordLLMFailure()` decrements `llmCallsThisMinute`. Previously burned slot was never returned, causing premature rate exhaustion under sustained errors and silent degradation to keyword-only matching
+- `maxLLMCallsPerMinute: 0` now returns a clear `'LLM disabled'` message instead of arithmetic confusion
+- Anthropic/OpenAI/OpenRouter error responses now read via `res.text()` before `res.ok` check — `res.json()` on a non-200 with malformed body was masking the real API error with a parse exception
+- Empty string API keys (`""`) now correctly rejected — `??` operator passed empty strings through as truthy; replaced with `.trim() ||` across all three provider env vars
+
+**High:**
+- Privacy trace step now correctly shows `'fail'` when auth would block — previously always pushed `status: 'pass'` regardless of auth state, making the trace misleading for unauthenticated requests
+- `preBoostMatchResult` is now an explicit shallow copy (`{ ...matchResult, candidates: matchResult.candidates.slice() }`) instead of a reference alias — prevents accidental mutation corrupting the pre-boost snapshot
+- `'manage'` keyword no longer causes false admin classification in OpenAPI parser — replaced substring check with word-boundary regex `\b(admin|administrator|backoffice|back-office|internal|superuser)\b`. Operations like `manageWishlist`, `fileManager` are no longer misclassified as admin
+- `'context'` and `'static'` param sources removed from schema and types — were schema-valid but silently dropped at runtime, injecting `null` into URLs with no error. Schema now only accepts `'user_query'` and `'session'`. Parser updated to map Swagger 2.x body/formData params to `'user_query'`
+- Swagger 2.0 `scheme` no longer hardcoded to `https` — respects declared `schemes` array, prefers `https` over `http` when both present
+- `process.exit()` removed from library signal handlers — `FileLearningStore` SIGTERM/SIGINT handlers were calling `process.exit(0)`, hijacking application shutdown sequence. Handlers now flush only. Handler references stored as module-level variables and cleaned up via `unregisterExitHandlers()` when `activeStores` is empty after `destroy()`
+- LLM `extracted_params` validated against declared capability params — previously cast directly to `Record<string, string | null>`. Nested objects now produce `null` instead of `"[object Object]"` in URLs. Unknown keys dropped. Numbers and booleans coerced to string
+
+**Medium:**
+- `ENOENT` vs corruption now distinguished in `FileCache` and `FileLearningStore` load — bare `catch {}` replaced with code check; only non-ENOENT errors emit a warning
+- `loadPromise` now resets on rejection — previously a failed load cached the rejected promise permanently, causing all subsequent calls to fail forever
+- `validateNavParam` allowlist aligned with `validateApiPathParam` — dots, colons, `@` now permitted. Allows deep links (`myapp://path`), domain-qualified values (`auth.tokens`), versioned routes (`v1:resource`)
+- `manifest.app` sanitized before LLM prompt injection — strips newlines, tabs, and control characters that could break prompt structure
+- `buildCacheKey` now used on cache write — engine stores results under both `normalizeQuery` key (exact phrasing) and `buildCacheKey` (capability + params semantic key). Differently-phrased queries resolving to the same capability share cache entries
+- Description scoring normalized against `Math.min(descWords.length, 10)` — previously `overlap / totalWords` penalized rich documentation. Long descriptions no longer score lower than short ones for the same keyword overlap
+- Silent `baseUrl` placeholder in parser now emits a `logger.warn` — generated configs with no server URL were silently broken at runtime
+- `writeManifest` now validates output path stays within working directory — public API had no guard, only the CLI wrapper did
+- `scoreCapability` converted from O(n²) to O(n) — `qWords.includes(w)` inside loops replaced with a `Set` built once per `match()` call. At 500 capabilities × 30 query words: ~300,000 ops → ~15,000 ops
+
+**Low / Cosmetic:**
+- `export class CapmanEngine` indentation fixed — extra leading 2-space indent removed
+- Trailing whitespace artifact removed from `matcher.ts` line 89
+- Rate-limiter call sites in `_runMatch()` now have comment noting shared quota between `ask()` and `explain()`
+- Learning boost skips high-confidence LLM matches — `applyBoostToMatchResult()` now accepts `resolvedVia` and returns early when `resolvedVia === 'llm' && confidence > 80`. Avoids learning signal incorrectly overriding strong LLM decisions
+- `matchWithLLM()` sanitizes capability `description` and `examples` fields via `sanitizeForPrompt()` before LLM prompt injection — strips newlines, delimiters, leading braces. Defence-in-depth on top of caller-side sanitization
+- `resolveApi` JSDoc updated — documents that partial failure scenario does not surface which endpoints succeeded, and notes planned `partialSuccess` field in future version
+- `extractParams` JSDoc updated — documents fallback word extraction limitation and future `pattern` field plan
+- `matchWithLLM` security JSDoc updated — notes current single-string prompt limitation for system/user message separation
+
+### Tests
+- 99 tests passing (up from 97)
+- Added: `'manage'` false admin classification test
+- Added: nav params with dots/colons allowed test
+  
+---
+
 ## [0.5.4] — 2026-04-29
 ### Added
 - `engine.loadManifest(manifest)` — hot-reloads the manifest without creating a new engine instance. Preserves cache, learning history, and rate limiter state. Clears cache automatically since cached results from the old manifest are no longer valid

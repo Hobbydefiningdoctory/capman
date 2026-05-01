@@ -9,7 +9,7 @@ export interface CapabilityParam {
   name: string
   description: string
   required: boolean
-  source: 'user_query' | 'session' | 'context' | 'static'
+  source: 'user_query' | 'session'
   default?: string | number | boolean
 }
 

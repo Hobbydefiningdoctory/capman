@@ -24,7 +24,12 @@ export interface CacheStore {
 // ─── Normalize query for cache key ────────────────────────────────────────────
 
 export function normalizeQuery(query: string): string {
-  return query.toLowerCase().trim().replace(/\s+/g, ' ')
+  return query
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s]/g, '')  // strip punctuation — "show orders!" and "show orders" same key
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 /**
@@ -117,11 +122,14 @@ export class FileCache implements CacheStore {
   }
 
       private load(): Promise<void> {
-        if (!this.loadPromise) {
-          this.loadPromise = this._doLoad()
-        }
-        return this.loadPromise
-      }
+    if (!this.loadPromise) {
+      this.loadPromise = this._doLoad().catch(err => {
+        this.loadPromise = null  // allow retry on next call
+        throw err
+      })
+    }
+    return this.loadPromise
+  }
 
       private async _doLoad(): Promise<void> {
         try {
@@ -140,9 +148,13 @@ export class FileCache implements CacheStore {
       } else {
         logger.warn(`File cache at ${this.filePath} contained unexpected format — starting fresh`)
       }
-    } catch {
-      // File doesn't exist yet — start fresh
-    }
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code
+          if (code !== 'ENOENT') {
+            logger.warn(`Failed to load file cache from ${this.filePath} (${code ?? 'unknown error'}) — starting fresh`)
+          }
+          // ENOENT = file doesn't exist yet — expected on first run, no warning needed
+        }
   }
 
   private save(): Promise<void> {

@@ -6,7 +6,7 @@ const CapabilityParamSchema = z.object({
   name:        z.string().min(1, 'param name is required'),
   description: z.string().min(1, 'param description is required'),
   required:    z.boolean(),
-  source:      z.enum(['user_query', 'session', 'context', 'static']),
+  source:      z.enum(['user_query', 'session']),
   default:     z.union([z.string(), z.number(), z.boolean()]).optional(),
 })
 
