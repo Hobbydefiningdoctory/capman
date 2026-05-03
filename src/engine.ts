@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -312,9 +312,8 @@ export class CapmanEngine {
         matchResult.extractedParams as Record<string, string | null>
       )
       await this.cache.set(queryKey, matchResult)
-      if (capKey !== queryKey) {
-        await this.cache.set(capKey, matchResult)
-      }
+      await this.cache.set(capKey, matchResult)
+      // capKey always starts with 'cap:' — structurally distinct from queryKey
     }
 
     // ── Step 6: Build reasoning array ────────────────────────────────────────
@@ -475,9 +474,10 @@ export class CapmanEngine {
      matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
     // ── Build candidate explanations ─────────────────────────────────────────
-    const candidates: ExplainCandidate[] = matchResult.candidates
-      .sort((a, b) => b.score - a.score)
-      .map(c => {
+        const qWordSet = new Set(tokenize(query))
+        const candidates: ExplainCandidate[] = matchResult.candidates
+          .sort((a, b) => b.score - a.score)
+          .map(c => {
         const cap = this.manifest.capabilities.find(mc => mc.id === c.capabilityId)
         let explanation = ''
 
@@ -485,9 +485,8 @@ export class CapmanEngine {
           explanation = 'No keyword overlap with examples or description'
         } else if (c.score >= 90) {
           explanation = `Strong match (${c.score}%) — query closely matches examples`
-        } else if (c.score >= 50) {
-          const qWordSet = new Set(query.toLowerCase().split(/\W+/).filter(Boolean))
-          const matchedWords = (cap?.examples ?? [])
+            } else if (c.score >= 50) {
+              const matchedWords = (cap?.examples ?? [])
             .flatMap(e => e.toLowerCase().split(/\s+/))
             .filter(w => qWordSet.has(w) && w.length > 2)
           const unique = [...new Set(matchedWords)].slice(0, 3)
@@ -805,15 +804,15 @@ export class CapmanEngine {
    * Applies learning boost to a MatchResult and returns the updated result.
    * Shared by ask() and explain() to avoid logic divergence.
    */
-    private async applyBoostToMatchResult(
-      query:       string,
-      matchResult: MatchResult,
-      resolvedVia: EngineResult['resolvedVia'] = 'keyword'
-    ): Promise<MatchResult> {
-      // Skip boost when LLM matched with high confidence — learning signal is
-      // less reliable than a strong LLM result and could incorrectly override it.
-      // Threshold 80% leaves room for boost to help on borderline LLM matches.
-      if (resolvedVia === 'llm' && matchResult.confidence > 80) return matchResult
+  private async applyBoostToMatchResult(
+    query:       string,
+    matchResult: MatchResult,
+    resolvedVia: EngineResult['resolvedVia'] = 'keyword'
+  ): Promise<MatchResult> {
+    // Skip boost when LLM matched with high confidence — learning signal is
+    // less reliable than a strong LLM result and could incorrectly override it.
+    // Threshold 80% leaves room for boost to help on borderline LLM matches.
+    if (resolvedVia === 'llm' && matchResult.confidence > 80) return matchResult
     const hasKeywordSignal = matchResult.candidates.some(c => c.score > 0)
     if (!hasKeywordSignal || matchResult.candidates.length === 0 || !this.learning || this.mode === 'cheap') {
       return matchResult
@@ -867,7 +866,7 @@ export class CapmanEngine {
     const stats = await this.learning.getStats()
     if (!stats || Object.keys(stats.index).length === 0) return candidates
 
-    const qWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 2 && !STOPWORDS.has(w))
+    const qWords = tokenize(query)
     if (qWords.length === 0) return candidates
 
     return candidates.map(candidate => {

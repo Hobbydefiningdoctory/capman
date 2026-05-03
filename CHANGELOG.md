@@ -4,7 +4,7 @@ All notable changes to capman are documented here.
 
 ---
 
-## [0.5.5] — 2026-05-01
+## [0.5.5] — 2026-05-03
 ### Fixed
 
 **Critical:**

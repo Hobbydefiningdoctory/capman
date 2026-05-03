@@ -141,7 +141,12 @@ export class FileCache implements CacheStore {
         // e.g. "Show me articles" and "show me articles" collapse to the same key.
         const normalized = new Map<string, CacheEntry>()
         for (const [k, v] of Object.entries(parsed)) {
-          normalized.set(normalizeQuery(k), v as CacheEntry)
+          // Structured keys (cap:/query: prefix from buildCacheKey) are already
+          // canonical — normalizeQuery strips their colons and equals signs.
+          const storeKey = (k.startsWith('cap:') || k.startsWith('query:'))
+            ? k
+            : normalizeQuery(k)
+          normalized.set(storeKey, v as CacheEntry)
         }
         this.store = normalized
         logger.debug(`File cache loaded: ${this.store.size} entries`)

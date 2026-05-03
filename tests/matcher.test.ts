@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { generate, match, matchWithLLM } from '../src/index'
 import type { CapmanConfig } from '../src/types'
+import { stem, tokenize } from '../src/matcher'
 
 // ─── Minimal test manifest ────────────────────────────────────────────────────
 
@@ -246,6 +247,37 @@ describe('match()', () => {
       const bloated = result.candidates.find(c => c.capabilityId === 'bloated_cap')
       const precise = result.candidates.find(c => c.capabilityId === 'precise_cap')
       expect(precise!.score).toBeGreaterThan(bloated!.score)
+    })
+  })
+
+  describe('stemmer and tokenizer', () => {
+    it('stems common suffixes correctly', () => {
+      expect(stem('tracking')).toBe('track')
+      expect(stem('ordered')).toBe('order')
+      expect(stem('orders')).toBe('order')
+      expect(stem('fetches')).toBe('fetch')
+      expect(stem('quickly')).toBe('quick')
+      expect(stem('class')).toBe('class')   // ss guard — not stripped
+      expect(stem('access')).toBe('access') // ss guard — not stripped
+    })
+
+    it('tokenize filters stopwords and stems', () => {
+      const tokens = tokenize('Show me the tracking orders')
+      expect(tokens).toContain('track')
+      expect(tokens).toContain('order')
+      expect(tokens).not.toContain('show')  // stopword
+      expect(tokens).not.toContain('me')    // stopword
+      expect(tokens).not.toContain('the')   // stopword
+    })
+
+    it('tokenize is symmetric — same stem for query and example', () => {
+      const queryTokens    = new Set(tokenize('tracking my orders'))
+      const exampleTokens  = new Set(tokenize('track order history'))
+      expect(queryTokens.has('track')).toBe(true)
+      expect(exampleTokens.has('track')).toBe(true)
+      // 'orders' → 'order' (strip -s), 'order' → 'order' (length 5, -er not stripped)
+      expect(queryTokens.has('order')).toBe(true)
+      expect(exampleTokens.has('order')).toBe(true)
     })
   })
   

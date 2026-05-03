@@ -199,7 +199,7 @@ async function resolveApi(
     }
     return {
       method: endpoint.method,
-      url: buildUrl(options.baseUrl ?? '', endpoint.path, endpointParams),
+      url: buildUrl(options.baseUrl ?? '', endpoint.path, endpointParams, sessionParamNames),
       params: Object.fromEntries(
         Object.entries(endpointParams).filter(([, v]) => v !== null && v !== undefined)
       ),
@@ -339,7 +339,8 @@ function validateApiPathParam(key: string, value: string): void {
 function buildUrl(
   baseUrl: string,
   urlPath: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  blockedQsParams?: Set<string>
 ): string {
   let resolved = urlPath
   const unused: Record<string, unknown> = {}
@@ -357,9 +358,10 @@ function buildUrl(
 
   const base = `${baseUrl.replace(/\/$/, '')}${resolved}`
   const qs   = Object.entries(unused)
-    .filter(([, v]) => v !== null && v !== undefined)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
-    .join('&')
+  .filter(([k, v]) => v !== null && v !== undefined
+    && (!blockedQsParams || !blockedQsParams.has(k)))
+  .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+  .join('&')
 
   return qs ? `${base}?${qs}` : base
 }
