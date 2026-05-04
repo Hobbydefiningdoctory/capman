@@ -38,19 +38,18 @@ export function stem(word: string): string {
 
   let s = word
 
-  // Order matters — longer suffixes first
-  if      (s.length > 7 && s.endsWith('ation'))  s = s.slice(0, -5)  // cancellation → cancel
-  else if (s.length > 6 && s.endsWith('tion'))   s = s.slice(0, -4)  // completion → complet
-  else if (s.length > 6 && s.endsWith('ing'))    s = s.slice(0, -3)  // tracking → track
-  else if (s.length > 5 && s.endsWith('ity'))    s = s.slice(0, -3)  // availability → availabl
-  else if (s.length > 5 && s.endsWith('ion'))    s = s.slice(0, -3)  // version → vers
-  else if (s.length > 4 && s.endsWith('est'))    s = s.slice(0, -3)  // fastest → fast
-  else if (s.length > 5 && s.endsWith('er'))     s = s.slice(0, -2)  // tracker → track
-  else if (s.length > 4 && s.endsWith('ed'))     s = s.slice(0, -2)  // ordered → order
-  else if (s.length > 4 && s.endsWith('ly'))     s = s.slice(0, -2)  // quickly → quick
-  else if (s.length > 4 && s.endsWith('es'))     s = s.slice(0, -2)  // fetches → fetch
+  if      (s.length > 7 && s.endsWith('ation')) s = s.slice(0, -5)  // cancellation → cancell
+  else if (s.length > 6 && s.endsWith('tion'))  s = s.slice(0, -4)  // completion → comple
+  else if (s.length > 6 && s.endsWith('ing'))   s = s.slice(0, -3)  // tracking → track
+  else if (s.length > 6 && s.endsWith('ity'))   s = s.slice(0, -3)  // availability → availabil
+  else if (s.length > 5 && s.endsWith('ion'))   s = s.slice(0, -3)  // version → vers
+  else if (s.length > 6 && s.endsWith('est'))   s = s.slice(0, -3)  // fastest → fast
+  else if (s.length > 4 && s.endsWith('er'))    s = s.slice(0, -2)  // tracker → track
+  else if (s.length > 4 && s.endsWith('ed'))    s = s.slice(0, -2)  // ordered → order
+  else if (s.length > 4 && s.endsWith('ly'))    s = s.slice(0, -2)  // quickly → quick
+  else if (s.length > 4 && s.endsWith('es'))    s = s.slice(0, -2)  // fetches → fetch
   else if (s.length > 3 && s.endsWith('s') &&
-           !s.endsWith('ss'))                     s = s.slice(0, -1)  // orders → order (not class)
+           !s.endsWith('ss'))                    s = s.slice(0, -1)  // orders → order
 
   stemCache.set(word, s)
   return s
@@ -70,39 +69,110 @@ export function tokenize(text: string): string[] {
     .map(stem)
 }
 
+// ─── BM25 Index ───────────────────────────────────────────────────────────────
+
+export interface BM25Index {
+  /** Document frequency — how many capabilities contain each term */
+  df:    Record<string, number>
+  /** Average field length per field type */
+  avgdl: { examples: number; description: number; name: number }
+  /** Total number of capabilities */
+  N:     number
+}
+
+/** Build a BM25 index over all capabilities. Call once at manifest load. */
+export function buildBM25Index(capabilities: Capability[]): BM25Index {
+  const N = capabilities.length
+  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0 }
+
+  const df: Record<string, number> = {}
+  let totalExLen = 0
+  let totalDescLen = 0
+  let totalNameLen = 0
+
+  for (const cap of capabilities) {
+    const exTokens   = tokenize((cap.examples ?? []).join(' '))
+    const descTokens = tokenize(cap.description)
+    const nameTokens = tokenize(cap.name)
+
+    totalExLen   += exTokens.length
+    totalDescLen += descTokens.length
+    totalNameLen += nameTokens.length
+
+    // Count document frequency — each term counted once per capability
+    const seen = new Set<string>()
+    for (const t of [...exTokens, ...descTokens, ...nameTokens]) {
+      if (!seen.has(t)) { df[t] = (df[t] ?? 0) + 1; seen.add(t) }
+    }
+  }
+
+  return {
+    df,
+    avgdl: {
+      examples:    totalExLen   / N,
+      description: totalDescLen / N,
+      name:        totalNameLen / N,
+    },
+    N,
+  }
+}
+
 function filterStopwords(words: string[]): string[] {
   return words.filter(w => !STOPWORDS.has(w.toLowerCase()) && w.length > 1)
 }
 
-function scoreCapability(qWordSet: Set<string>, cap: Capability): number {
+/**
+ * BM25 scoring with field weights.
+ * k1 = 1.5 (TF saturation), b = 0.75 (length normalization)
+ * Field weights: examples 0.6, description 0.3, name 0.1
+ */
+export function scoreCapability(
+  qWordSet: Set<string>,
+  cap:      Capability,
+  index:    BM25Index,
+  k1 = 1.5,
+  b  = 0.75
+): number {
+  if (index.N === 0) return 0
+
+  const score = bm25Field(qWordSet, tokenize((cap.examples ?? []).join(' ')), index, 'examples',    k1, b) * 0.6
+              + bm25Field(qWordSet, tokenize(cap.description),                 index, 'description', k1, b) * 0.3
+              + bm25Field(qWordSet, tokenize(cap.name),                        index, 'name',        k1, b) * 0.1
+
+  return score
+}
+
+function bm25Field(
+  queryTerms: Set<string>,
+  fieldTokens: string[],
+  index:       BM25Index,
+  field:       'examples' | 'description' | 'name',
+  k1:          number,
+  b:           number
+): number {
+  if (fieldTokens.length === 0) return 0
+
+  const avgdl = index.avgdl[field] || 1
+  const dl    = fieldTokens.length
+  const tf    = new Map<string, number>()
+
+  for (const t of fieldTokens) {
+    tf.set(t, (tf.get(t) ?? 0) + 1)
+  }
+
   let score = 0
+  for (const term of queryTerms) {
+    const termTf = tf.get(term) ?? 0
+    if (termTf === 0) continue
 
-  // Check examples
-  let bestExampleScore = 0
-  for (const example of cap.examples ?? []) {
-    const exWords = tokenize(example)
-    if (exWords.length === 0) continue
-    const overlap = exWords.filter(w => qWordSet.has(w)).length
-    const contribution = (overlap / exWords.length) * 60
-    bestExampleScore = Math.max(bestExampleScore, contribution)
-  }
-  score += bestExampleScore
+    const df  = index.df[term] ?? 0
+    const idf = Math.log((index.N - df + 0.5) / (df + 0.5) + 1)
+    const tfNorm = (termTf * (k1 + 1)) / (termTf + k1 * (1 - b + b * (dl / avgdl)))
 
-  // Check description words
-  const descWords = tokenize(cap.description)
-  if (descWords.length > 0) {
-    const descOverlap = descWords.filter(w => qWordSet.has(w)).length
-    score += Math.min((descOverlap / Math.min(descWords.length, 10)) * 30, 30)
+    score += idf * tfNorm
   }
 
-  // Check name words
-  const nameWords = tokenize(cap.name)
-  if (nameWords.length > 0) {
-    const nameOverlap = nameWords.filter(w => qWordSet.has(w)).length
-    score += (nameOverlap / nameWords.length) * 10
-  }
-
-  return Math.min(Math.round(score), 100)
+  return score
 }
 
 export function resolverToIntent(cap: Capability): MatchResult['intent'] {
@@ -230,6 +300,10 @@ export function extractParams(query: string, cap: Capability): Record<string, st
 export interface MatchOptions {
   fuzzyMatch?:     boolean
   fuzzyThreshold?: number
+  bm25Index?:      BM25Index   // pre-built index — pass from CapmanEngine for performance
+  bm25K1?:         number      // TF saturation (default: 1.5)
+  bm25B?:          number      // length normalization (default: 0.75)
+  bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
 }
 
 export function match(
@@ -305,9 +379,28 @@ export function match(
     // Build qWordSet once — O(1) lookups instead of O(n) Array.includes per word
     const qWordSet = new Set(tokenize(query))
 
-    const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
-    for (const cap of manifest.capabilities) {
-      const keywordScore = scoreCapability(qWordSet, cap)
+      // Build BM25 index for this manifest — O(capabilities × tokens)
+      // In CapmanEngine this is pre-built; for direct match() calls it's built per-call
+      const bm25Index = options.bm25Index ?? buildBM25Index(manifest.capabilities)
+      const k1        = options.bm25K1 ?? 1.5
+      const b         = options.bm25B  ?? 0.75
+
+      // Calibrate ceiling — max self-score for normalization
+      const ceiling = options.bm25Ceiling ?? (() => {
+        let max = 0
+        for (const cap of manifest.capabilities) {
+          if (!cap.examples?.length) continue
+          const selfWords = new Set(tokenize(cap.examples[0]))
+          const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
+          if (raw > max) max = raw
+        }
+        return max > 0 ? max : 1
+      })()
+
+  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
+  for (const cap of manifest.capabilities) {
+    const rawScore     = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+    const keywordScore = Math.min(100, Math.round((rawScore / ceiling) * 100))
     const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
     const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
     const score = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))

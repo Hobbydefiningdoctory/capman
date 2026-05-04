@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, type BM25Index } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -56,6 +56,11 @@ export interface EngineOptions {
   headers?: Record<string, string>
   /** Confidence threshold for keyword matcher (default: 50) */
   threshold?: number
+
+  /** BM25 TF saturation parameter (default: 1.5) */
+  bm25K1?: number
+  /** BM25 length normalization parameter (default: 0.75) */
+  bm25B?: number
 
   /**
    * Optional TTL for cache entries in milliseconds.
@@ -142,6 +147,10 @@ export class CapmanEngine {
   private cacheTtlMs: number | null
   private fuzzyMatch:     boolean
   private fuzzyThreshold: number
+  private bm25Index:   BM25Index
+  private bm25Ceiling: number
+  private bm25K1:      number
+  private bm25B:       number
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -171,6 +180,10 @@ export class CapmanEngine {
     this.llmCircuitBreakerResetMs   = options.llmCircuitBreakerResetMs   ?? 60_000
     this.fuzzyMatch     = options.fuzzyMatch     ?? false
     this.fuzzyThreshold = options.fuzzyThreshold ?? 0.4
+    this.bm25K1    = options.bm25K1 ?? 1.5
+    this.bm25B     = options.bm25B  ?? 0.75
+    this.bm25Index = buildBM25Index(options.manifest.capabilities)
+    this.bm25Ceiling = this.calibrateBM25Ceiling()
 
     // Cache — default MemoryCache (no filesystem writes), or disabled with false
     // Use FileCache or ComboCache explicitly for persistence across restarts
@@ -424,12 +437,10 @@ export class CapmanEngine {
      */
   async loadManifest(manifest: Manifest): Promise<void> {
     this.checkManifestVersion(manifest)
-    this.manifest = manifest
+    this.manifest    = manifest
+    this.bm25Index   = buildBM25Index(manifest.capabilities)
+    this.bm25Ceiling = this.calibrateBM25Ceiling()
     await this.clearCache()
-    // Note: LLM rate limiter state (llmCallsThisMinute, llmConsecutiveFails,
-    // llmCircuitOpenAt) is intentionally preserved across manifest reloads.
-    // The LLM provider has not changed, so circuit breaker state remains valid.
-    // If you need a clean rate limiter state, create a new CapmanEngine instance.
   }
 
   /**
@@ -486,9 +497,9 @@ export class CapmanEngine {
         } else if (c.score >= 90) {
           explanation = `Strong match (${c.score}%) — query closely matches examples`
             } else if (c.score >= 50) {
-              const matchedWords = (cap?.examples ?? [])
-            .flatMap(e => e.toLowerCase().split(/\s+/))
-            .filter(w => qWordSet.has(w) && w.length > 2)
+          const matchedWords = (cap?.examples ?? [])
+          .flatMap(e => tokenize(e))
+          .filter(w => qWordSet.has(w))
           const unique = [...new Set(matchedWords)].slice(0, 3)
           explanation = unique.length
             ? `Matched keywords: ${unique.join(', ')} (${c.score}%)`
@@ -692,6 +703,10 @@ export class CapmanEngine {
       const fuzzyOpts = {
         fuzzyMatch:     this.fuzzyMatch,
         fuzzyThreshold: this.fuzzyThreshold,
+        bm25Index:      this.bm25Index,
+        bm25Ceiling:    this.bm25Ceiling,
+        bm25K1:         this.bm25K1,
+        bm25B:          this.bm25B,
       }
 
     switch (this.mode) {
@@ -923,5 +938,16 @@ export class CapmanEngine {
       resolvedVia,
       timestamp:       new Date().toISOString(),
     })
+  }
+
+  private calibrateBM25Ceiling(): number {
+    let max = 0
+    for (const cap of this.manifest.capabilities) {
+      if (!cap.examples?.length) continue
+      const selfWords = new Set(tokenize(cap.examples[0]))
+      const raw = _scoreCapability(selfWords, cap, this.bm25Index, this.bm25K1, this.bm25B)
+      if (raw > max) max = raw
+    }
+    return max > 0 ? max : 1
   }
 }
