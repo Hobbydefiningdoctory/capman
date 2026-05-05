@@ -485,7 +485,14 @@ export class CapmanEngine {
      matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
     // ── Build candidate explanations ─────────────────────────────────────────
-        const qWordSet = new Set(tokenize(query))
+        const qTokens  = tokenize(query)
+        const qWordSet = new Set(qTokens)
+
+        // Build query bigrams for phrase bonus
+        const qBigrams = new Set<string>()
+        for (let i = 0; i < qTokens.length - 1; i++) {
+          qBigrams.add(`${qTokens[i]}__${qTokens[i + 1]}`)
+        }
         const candidates: ExplainCandidate[] = matchResult.candidates
           .sort((a, b) => b.score - a.score)
           .map(c => {
@@ -948,6 +955,6 @@ export class CapmanEngine {
       const raw = _scoreCapability(selfWords, cap, this.bm25Index, this.bm25K1, this.bm25B)
       if (raw > max) max = raw
     }
-    return max > 0 ? max : 1
+    return max > 0 ? max : 100
   }
 }

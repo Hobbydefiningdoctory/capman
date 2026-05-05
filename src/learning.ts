@@ -329,11 +329,7 @@ export class FileLearningStore implements LearningStore {
     // not be persisted to disk under GDPR/CCPA data retention requirements.
     const sanitized: LearningEntry = {
       ...entry,
-      query: entry.query
-        .toLowerCase()
-        .split(/\W+/)
-        .filter(w => w.length > 2 && !STOPWORDS.has(w))
-        .join(' '),
+      query: tokenize(entry.query).join(' '),
     }
     this.entries.push(sanitized)
     this.learningIndex.update(sanitized)
@@ -388,11 +384,7 @@ export class MemoryLearningStore implements LearningStore {
   async record(entry: LearningEntry): Promise<void> {
     const sanitized: LearningEntry = {
       ...entry,
-      query: entry.query
-        .toLowerCase()
-        .split(/\W+/)
-        .filter(w => w.length > 2 && !STOPWORDS.has(w))
-        .join(' '),
+      query: tokenize(entry.query).join(' '),
     }
     this.entries.push(sanitized)
     this.learningIndex.update(sanitized)

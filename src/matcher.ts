@@ -78,12 +78,14 @@ export interface BM25Index {
   avgdl: { examples: number; description: number; name: number }
   /** Total number of capabilities */
   N:     number
+  /** Bigram sets per capability — post-stopword, post-stem, examples only */
+  bigrams: Record<string, Set<string>>
 }
 
 /** Build a BM25 index over all capabilities. Call once at manifest load. */
 export function buildBM25Index(capabilities: Capability[]): BM25Index {
   const N = capabilities.length
-  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0 }
+  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0, bigrams: {}, }
 
   const df: Record<string, number> = {}
   let totalExLen = 0
@@ -106,6 +108,20 @@ export function buildBM25Index(capabilities: Capability[]): BM25Index {
     }
   }
 
+  // Build bigram sets per capability — examples field only
+  // Clean bigrams only: post-stopword, post-stem tokens
+  const bigrams: Record<string, Set<string>> = {}
+  for (const cap of capabilities) {
+    const set = new Set<string>()
+    for (const example of cap.examples ?? []) {
+      const tokens = tokenize(example)
+      for (let i = 0; i < tokens.length - 1; i++) {
+        set.add(`${tokens[i]}__${tokens[i + 1]}`)
+      }
+    }
+    bigrams[cap.id] = set
+  }
+
   return {
     df,
     avgdl: {
@@ -114,11 +130,8 @@ export function buildBM25Index(capabilities: Capability[]): BM25Index {
       name:        totalNameLen / N,
     },
     N,
+    bigrams,
   }
-}
-
-function filterStopwords(words: string[]): string[] {
-  return words.filter(w => !STOPWORDS.has(w.toLowerCase()) && w.length > 1)
 }
 
 /**
@@ -173,6 +186,20 @@ function bm25Field(
   }
 
   return score
+}
+
+/**
+ * Computes a phrase-level bonus based on bigram overlap between query and capability.
+ * Returns a raw BM25-scale value (not normalized) — added before ceiling division.
+ * Capped at 0.5 raw units (~15-20 normalized points at average ceiling).
+ */
+function bigramBonus(queryBigrams: Set<string>, capBigrams: Set<string>): number {
+  if (queryBigrams.size === 0 || capBigrams.size === 0) return 0
+  let overlap = 0
+  for (const bigram of queryBigrams) {
+    if (capBigrams.has(bigram)) overlap++
+  }
+  return Math.min(overlap * 0.15, 0.5)
 }
 
 export function resolverToIntent(cap: Capability): MatchResult['intent'] {
@@ -377,7 +404,14 @@ export function match(
 
     // ── Score all capabilities ────────────────────────────────────────────────
     // Build qWordSet once — O(1) lookups instead of O(n) Array.includes per word
-    const qWordSet = new Set(tokenize(query))
+      const qTokens  = tokenize(query)
+      const qWordSet = new Set(qTokens)
+
+      // Build query bigrams for phrase bonus
+      const qBigrams = new Set<string>()
+      for (let i = 0; i < qTokens.length - 1; i++) {
+        qBigrams.add(`${qTokens[i]}__${qTokens[i + 1]}`)
+      }
 
       // Build BM25 index for this manifest — O(capabilities × tokens)
       // In CapmanEngine this is pre-built; for direct match() calls it's built per-call
@@ -394,12 +428,14 @@ export function match(
           const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
           if (raw > max) max = raw
         }
-        return max > 0 ? max : 1
+        return max > 0 ? max : 100
       })()
 
-  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
-  for (const cap of manifest.capabilities) {
-    const rawScore     = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+   const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
+    for (const cap of manifest.capabilities) {
+    const rawBM25   = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+    const rawBonus  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
+    const rawScore  = rawBM25 + rawBonus
     const keywordScore = Math.min(100, Math.round((rawScore / ceiling) * 100))
     const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
     const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
