@@ -66,6 +66,35 @@ Rules:
 - Respond ONLY with the raw JSON object — no markdown, no explanation`
 }
 
+// ─── Example enrichment ───────────────────────────────────────────────────────
+
+function buildEnrichPrompt(capabilities) {
+  const caps = capabilities
+    .filter(c => (c.examples?.length ?? 0) < 20)
+    .map(c => ({
+      id:       c.id,
+      name:     c.name,
+      desc:     c.description,
+      existing: c.examples ?? [],
+    }))
+
+  if (caps.length === 0) return null
+
+  return `You are helping improve an AI agent capability manifest.
+For each capability below, generate 15 natural language phrasings a user might say to invoke it.
+Phrasings must be DIFFERENT from the existing examples listed.
+Return ONLY a JSON object mapping capability id to an array of new phrasings. No explanation.
+
+Capabilities:
+${JSON.stringify(caps, null, 2)}
+
+Respond with ONLY this structure:
+{
+  "<capability_id>": ["phrasing 1", "phrasing 2", ...],
+  ...
+}`
+}
+
 // ─── LLM caller ───────────────────────────────────────────────────────────────
 
 async function callLLM(provider, apiKey, prompt) {
@@ -90,6 +119,29 @@ async function callLLM(provider, apiKey, prompt) {
       throw new Error(`Anthropic API error: ${msg}`)
     }
     return JSON.parse(text).content[0].text
+  }
+
+  if (provider === 'groq') {
+    const res  = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
+      },
+      body: JSON.stringify({
+        model:      'llama-3.3-70b-versatile',
+        max_tokens: 1024,
+        messages:   [{ role: 'user', content: prompt }],
+      }),
+    })
+    const text = await res.text()
+    if (!res.ok) {
+      let msg = res.statusText
+      try { msg = JSON.parse(text).error?.message ?? msg } catch {}
+      throw new Error(`LLAMA API error: ${msg}`)
+    }
+    return JSON.parse(text).choices[0].message.content
   }
 
   if (provider === 'openai') {
@@ -141,14 +193,70 @@ async function callLLM(provider, apiKey, prompt) {
   throw new Error(`Unknown provider: ${provider}`)
 }
 
+async function enrichExamples(config, apiKey, provider) {
+  const prompt = buildEnrichPrompt(config.capabilities)
+  if (!prompt) {
+    log.info('All capabilities already have ≥ 20 examples — nothing to enrich')
+    return config
+  }
+
+  log.info(`Enriching examples for ${config.capabilities.filter(c => (c.examples?.length ?? 0) < 20).length} capabilities...`)
+
+  let raw
+  try {
+    raw = await callLLM(provider, apiKey, prompt)
+  } catch (e) {
+    log.warn(`LLM call failed during enrichment: ${e.message}`)
+    return config
+  }
+
+  let parsed
+  try {
+    // Strip any markdown code fences, then try direct parse.
+    // If that fails, extract the first top-level {...} block (handles preamble/postamble).
+    const stripped = raw.replace(/```[\w]*\n?/g, '').trim()
+    let jsonStr = stripped
+    if (!jsonStr.startsWith('{')) {
+      const start = stripped.indexOf('{')
+      const end   = stripped.lastIndexOf('}')
+      if (start !== -1 && end !== -1 && end > start) jsonStr = stripped.slice(start, end + 1)
+    }
+    parsed = JSON.parse(jsonStr)
+  } catch {
+    log.warn('Could not parse LLM enrichment response — skipping enrichment')
+    return config
+  }
+
+  let totalAdded = 0
+  const enrichedCapabilities = config.capabilities.map(cap => {
+    const newPhrasings = parsed[cap.id]
+    if (!Array.isArray(newPhrasings) || newPhrasings.length === 0) return cap
+
+    const existing = new Set((cap.examples ?? []).map(e => e.toLowerCase().trim()))
+    const unique   = newPhrasings
+      .filter(p => typeof p === 'string' && p.trim().length > 0)
+      .filter(p => !existing.has(p.toLowerCase().trim()))
+      .slice(0, 15)
+
+    if (unique.length === 0) return cap
+
+    totalAdded += unique.length
+    return { ...cap, examples: [...(cap.examples ?? []), ...unique] }
+  })
+
+  log.success(`Added ${totalAdded} new phrasings across ${config.capabilities.length} capabilities`)
+  return { ...config, capabilities: enrichedCapabilities }
+}
+
 // ─── Command ──────────────────────────────────────────────────────────────────
 
 module.exports = async function cmdGenerate() {
   header()
   const { generate, loadConfig, writeManifest, validate, parseOpenAPI } = requireSrc()
 
-const fromFlag  = getFlag('--from')
-  const aiFlag    = flags.includes('--ai')
+  const fromFlag    = getFlag('--from')
+  const aiFlag      = flags.includes('--ai')
+  const enrichFlag  = flags.includes('--enrich-examples')
   const cwd       = process.cwd()
   const outPath   = safeOutputPath(getFlag('--out') ?? 'manifest.json', cwd)
   const configOut = safeOutputPath(getFlag('--config-out') ?? 'capman.config.js', cwd)
@@ -177,7 +285,19 @@ const fromFlag  = getFlag('--from')
     module.exports = ${JSON.stringify(config, null, 2)}
     `
     fs.writeFileSync(configOut, configContent)
-    log.success(`Config written to ${configOut}`)
+      // Enrich examples if requested
+      if (enrichFlag) {
+        const apiKey  = process.env.ANTHROPIC_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim() ||  process.env.OPENAI_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim() || null
+        const provider = process.env.ANTHROPIC_API_KEY?.trim() ? 'anthropic' : process.env.GROQ_API_KEY?.trim() ? 'groq' : process.env.OPENAI_API_KEY?.trim() ? 'openai' : process.env.OPENROUTER_API_KEY?.trim() ? 'openrouter' : null
+        if (!apiKey || !provider) {
+          log.warn('--enrich-examples requires an LLM API key — skipping enrichment')
+        } else {
+          config = await enrichExamples(config, apiKey, provider)
+          fs.writeFileSync(configOut, `// Auto-generated by capman from OpenAPI spec\n// Review and adjust before committing\n\nmodule.exports = ${JSON.stringify(config, null, 2)}\n`)
+        }
+      }
+
+      log.success(`Config written to ${configOut}`)
 
     try {
       const manifest = generate(config)
@@ -220,17 +340,19 @@ const fromFlag  = getFlag('--from')
 
     const apiKey =
     process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.GROQ_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     process.env.OPENROUTER_API_KEY?.trim() ||
     null
     const provider =
     process.env.ANTHROPIC_API_KEY?.trim() ? 'anthropic' :
+    process.env.GROQ_API_KEY?.trim() ? 'groq' :
     process.env.OPENAI_API_KEY?.trim() ? 'openai' :
     process.env.OPENROUTER_API_KEY?.trim() ? 'openrouter' : null
 
     if (!apiKey || !provider) {
       log.error('No LLM API key found.')
-      console.log(`  Set one of: ${c.teal}ANTHROPIC_API_KEY${c.reset}, ${c.teal}OPENAI_API_KEY${c.reset}, or ${c.teal}OPENROUTER_API_KEY${c.reset}`)
+      console.log(`  Set one of: ${c.teal}ANTHROPIC_API_KEY${c.reset},${c.teal}GROQ_API_KEY${c.reset}, ${c.teal}OPENAI_API_KEY${c.reset}, or ${c.teal}OPENROUTER_API_KEY${c.reset}`)
       process.exit(1)
     }
 
@@ -253,6 +375,11 @@ const fromFlag  = getFlag('--from')
       log.error('Could not parse LLM response. Try again or use --from with an OpenAPI spec.')
       console.log(`\n  Raw response:\n${raw.slice(0, 500)}`)
       process.exit(1)
+    }
+
+    // Enrich examples if requested
+    if (enrichFlag) {
+      config = await enrichExamples(config, apiKey, provider)
     }
 
     const configContent = `// Auto-generated by capman AI\n// Review before committing\n\nmodule.exports = ${JSON.stringify(config, null, 2)}\n`
@@ -304,6 +431,22 @@ const fromFlag  = getFlag('--from')
   }
   if (validation.warnings.length) {
     validation.warnings.forEach(w => log.warn(w))
+  }
+
+  // Enrich examples if requested
+  if (enrichFlag) {
+    const apiKey   = process.env.ANTHROPIC_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || process.env.OPENROUTER_API_KEY?.trim() || null
+    const provider = process.env.ANTHROPIC_API_KEY?.trim() ? 'anthropic' : process.env.GROQ_API_KEY?.trim() ? 'groq' : process.env.OPENAI_API_KEY?.trim() ? 'openai' : process.env.OPENROUTER_API_KEY?.trim() ? 'openrouter' : null
+    if (!apiKey || !provider) {
+      log.warn('--enrich-examples requires an LLM API key — skipping enrichment')
+    } else {
+      const enriched = await enrichExamples(config, apiKey, provider)
+      if (enriched !== config) {
+        const configPath2 = getFlag('--config-out') ?? 'capman.config.js'
+        fs.writeFileSync(safeOutputPath(configPath2, cwd), `// Enriched by capman --enrich-examples\n\nmodule.exports = ${JSON.stringify(enriched, null, 2)}\n`)
+        manifest = generate(enriched)
+      }
+    }
   }
 
   writeManifest(manifest, outPath)

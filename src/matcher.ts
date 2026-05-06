@@ -114,10 +114,7 @@ export function buildBM25Index(capabilities: Capability[]): BM25Index {
   for (const cap of capabilities) {
     const set = new Set<string>()
     for (const example of cap.examples ?? []) {
-      const tokens = tokenize(example)
-      for (let i = 0; i < tokens.length - 1; i++) {
-        set.add(`${tokens[i]}__${tokens[i + 1]}`)
-      }
+      for (const bg of extractBigrams(tokenize(example))) set.add(bg)
     }
     bigrams[cap.id] = set
   }
@@ -189,9 +186,21 @@ function bm25Field(
 }
 
 /**
- * Computes a phrase-level bonus based on bigram overlap between query and capability.
- * Returns a raw BM25-scale value (not normalized) — added before ceiling division.
- * Capped at 0.5 raw units (~15-20 normalized points at average ceiling).
+ * Extracts bigrams from a token array as "token1__token2" strings.
+ * Input must already be post-stopword and post-stem (use tokenize() first).
+ */
+export function extractBigrams(tokens: string[]): Set<string> {
+  const bigrams = new Set<string>()
+  for (let i = 0; i < tokens.length - 1; i++) {
+    bigrams.add(`${tokens[i]}__${tokens[i + 1]}`)
+  }
+  return bigrams
+}
+
+/**
+ * Returns a fixed bonus in normalized points (0–15), applied after BM25 normalization.
+ * 5 points per matching bigram, saturates at 3 bigrams (15 points).
+ * Fixed point value regardless of manifest size — ceiling-independent.
  */
 function bigramBonus(queryBigrams: Set<string>, capBigrams: Set<string>): number {
   if (queryBigrams.size === 0 || capBigrams.size === 0) return 0
@@ -199,7 +208,7 @@ function bigramBonus(queryBigrams: Set<string>, capBigrams: Set<string>): number
   for (const bigram of queryBigrams) {
     if (capBigrams.has(bigram)) overlap++
   }
-  return Math.min(overlap * 0.15, 0.5)
+  return Math.min(overlap * 5, 15)  // normalized points — 3 bigrams saturate at 15
 }
 
 export function resolverToIntent(cap: Capability): MatchResult['intent'] {
@@ -408,10 +417,7 @@ export function match(
       const qWordSet = new Set(qTokens)
 
       // Build query bigrams for phrase bonus
-      const qBigrams = new Set<string>()
-      for (let i = 0; i < qTokens.length - 1; i++) {
-        qBigrams.add(`${qTokens[i]}__${qTokens[i + 1]}`)
-      }
+  const qBigrams = extractBigrams(qTokens)
 
       // Build BM25 index for this manifest — O(capabilities × tokens)
       // In CapmanEngine this is pre-built; for direct match() calls it's built per-call
@@ -433,10 +439,10 @@ export function match(
 
    const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
     for (const cap of manifest.capabilities) {
-    const rawBM25   = scoreCapability(qWordSet, cap, bm25Index, k1, b)
-    const rawBonus  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
-    const rawScore  = rawBM25 + rawBonus
-    const keywordScore = Math.min(100, Math.round((rawScore / ceiling) * 100))
+    const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+    const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
+    const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
+    const keywordScore = Math.min(100, bm25Score + bonusPoints)
     const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
     const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
     const score = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))

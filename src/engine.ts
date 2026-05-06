@@ -487,12 +487,7 @@ export class CapmanEngine {
     // ── Build candidate explanations ─────────────────────────────────────────
         const qTokens  = tokenize(query)
         const qWordSet = new Set(qTokens)
-
-        // Build query bigrams for phrase bonus
-        const qBigrams = new Set<string>()
-        for (let i = 0; i < qTokens.length - 1; i++) {
-          qBigrams.add(`${qTokens[i]}__${qTokens[i + 1]}`)
-        }
+     
         const candidates: ExplainCandidate[] = matchResult.candidates
           .sort((a, b) => b.score - a.score)
           .map(c => {

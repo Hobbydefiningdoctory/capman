@@ -12,6 +12,7 @@ module.exports = function cmdHelp() {
   console.log(`    ${c.teal}generate --from <path|url>${c.reset}   Generate from OpenAPI/Swagger spec`)
   console.log(`    ${c.teal}generate --ai${c.reset}                Generate manifest using AI`)
   console.log(`    ${c.teal}validate${c.reset}                     Validate an existing manifest.json`)
+  console.log(`    ${c.teal}generate --enrich-examples${c.reset}   Enrich manifest examples using LLM`)
   console.log(`    ${c.teal}inspect${c.reset}                      Print all capabilities in manifest`)
   console.log(`    ${c.teal}demo${c.reset}                         Run a live demo with sample queries`)
   console.log(`    ${c.teal}run "query"${c.reset}                  Run a query against your manifest`)
