@@ -97,7 +97,7 @@ Respond with ONLY this structure:
 
 // ─── LLM caller ───────────────────────────────────────────────────────────────
 
-async function callLLM(provider, apiKey, prompt) {
+async function callLLM(provider, apiKey, prompt, maxTokens) {
   if (provider === 'anthropic') {
     const res  = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -108,7 +108,7 @@ async function callLLM(provider, apiKey, prompt) {
       },
       body: JSON.stringify({
         model:      'claude-sonnet-4-20250514',
-        max_tokens: 4000,
+        max_tokens: maxTokens ?? 4000,
         messages:   [{ role: 'user', content: prompt }],
       }),
     })
@@ -126,12 +126,11 @@ async function callLLM(provider, apiKey, prompt) {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
-        'Content-Type':      'application/json',
-        'x-api-key':         apiKey,
+        'Content-Type':  'application/json',
       },
       body: JSON.stringify({
         model:      'llama-3.3-70b-versatile',
-        max_tokens: 1024,
+        max_tokens: maxTokens ?? 4096,
         messages:   [{ role: 'user', content: prompt }],
       }),
     })
@@ -139,7 +138,7 @@ async function callLLM(provider, apiKey, prompt) {
     if (!res.ok) {
       let msg = res.statusText
       try { msg = JSON.parse(text).error?.message ?? msg } catch {}
-      throw new Error(`LLAMA API error: ${msg}`)
+      throw new Error(`Groq API error: ${msg}`)
     }
     return JSON.parse(text).choices[0].message.content
   }
@@ -153,7 +152,7 @@ async function callLLM(provider, apiKey, prompt) {
       },
       body: JSON.stringify({
         model:      'gpt-4o-mini',
-        max_tokens: 4000,
+        max_tokens: maxTokens ?? 4000,
         messages:   [{ role: 'user', content: prompt }],
       }),
     })
@@ -176,7 +175,7 @@ async function callLLM(provider, apiKey, prompt) {
       },
       body: JSON.stringify({
         model:      'openai/gpt-oss-120b:free',
-        max_tokens: 4000,
+        max_tokens: maxTokens ?? 4000,
         messages:   [{ role: 'user', content: prompt }],
         provider:   { order: ['open-inference'], allow_fallbacks: true },
       }),
@@ -204,7 +203,7 @@ async function enrichExamples(config, apiKey, provider) {
 
   let raw
   try {
-    raw = await callLLM(provider, apiKey, prompt)
+    raw = await callLLM(provider, apiKey, prompt, 4096)
   } catch (e) {
     log.warn(`LLM call failed during enrichment: ${e.message}`)
     return config
