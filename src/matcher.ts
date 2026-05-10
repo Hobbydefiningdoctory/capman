@@ -224,7 +224,7 @@ export function resolverToIntent(cap: Capability): MatchResult['intent'] {
  * capability field values before injection into the system prompt.
  * Removes control characters, newlines, and delimiter-like sequences.
  */
-function sanitizeForPrompt(value: string, maxLen: number): string {
+export function sanitizeForPrompt(value: string, maxLen: number): string {
   return value
     .replace(/[\r\n\t]/g, ' ')           // newlines → space
     .replace(/---+/g, '—')               // horizontal rules → em dash

@@ -81,7 +81,7 @@ function buildEnrichPrompt(capabilities) {
   if (caps.length === 0) return null
 
   return `You are helping improve an AI agent capability manifest.
-For each capability below, generate 15 natural language phrasings a user might say to invoke it.
+For each capability below, generate 20 natural language phrasings a user might say to invoke it.
 Phrasings must be DIFFERENT from the existing examples listed.
 Return ONLY a JSON object mapping capability id to an array of new phrasings. No explanation.
 
@@ -235,7 +235,7 @@ async function enrichExamples(config, apiKey, provider) {
     const unique   = newPhrasings
       .filter(p => typeof p === 'string' && p.trim().length > 0)
       .filter(p => !existing.has(p.toLowerCase().trim()))
-      .slice(0, 15)
+      .slice(0, 20)
 
     if (unique.length === 0) return cap
 
@@ -272,7 +272,7 @@ module.exports = async function cmdGenerate() {
       process.exit(1)
     }
 
-    const { config, stats } = result
+    let { config, stats } = result
 
     log.success(`Parsed ${stats.total} capabilities from spec`)
     if (stats.skipped > 0) log.info(`Skipped ${stats.skipped} operations (insufficient info)`)
@@ -311,7 +311,8 @@ module.exports = async function cmdGenerate() {
     console.log(`  ${c.gray}Next steps:${c.reset}`)
     console.log(`  1. Review ${c.teal}${configOut}${c.reset} — adjust descriptions and examples`)
     console.log(`  2. Run ${c.teal}npx capman validate${c.reset} to check your manifest`)
-    console.log(`  3. Run ${c.teal}npx capman demo${c.reset} to see it in action`)
+    console.log(`  3. Run ${c.teal}npx capman generate --enrich-examples${c.reset} to add phrasings ${c.gray}(better matching)${c.reset}`)
+    console.log(`  4. Run ${c.teal}npx capman demo${c.reset} to see it in action`)
     console.log()
     return
   }
@@ -396,8 +397,9 @@ module.exports = async function cmdGenerate() {
 
     console.log()
     console.log(`  ${c.gray}Review ${configOut} — the AI may have missed things.${c.reset}`)
-    console.log(`  ${c.teal}npx capman validate${c.reset}   ${c.gray}→ check for errors${c.reset}`)
-    console.log(`  ${c.teal}npx capman inspect${c.reset}    ${c.gray}→ see all capabilities${c.reset}`)
+    console.log(`  ${c.teal}npx capman validate${c.reset}                       ${c.gray}→ check for errors${c.reset}`)
+    console.log(`  ${c.teal}npx capman inspect${c.reset}                        ${c.gray}→ see all capabilities${c.reset}`)
+    console.log(`  ${c.teal}npx capman generate --enrich-examples${c.reset}     ${c.gray}→ add 20 phrasings per capability (better matching)${c.reset}`)
     console.log()
     return
   }

@@ -3,7 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, type BM25Index } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, type BM25Index } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -117,17 +117,38 @@ export interface EngineOptions {
    * @default 0.4
    */
   fuzzyThreshold?: number
+  /**
+   * When true, a 'marginal' verdict in balanced/accurate mode triggers a
+   * targeted LLM disambiguation between the top-2 candidates.
+   * Uses ~200 tokens vs ~4000 for full manifest — 93% cost reduction.
+   * Has no effect in cheap mode or when no llm is provided.
+   * @default false
+   */
+  marginAwareLLM?: boolean
+  /**
+   * Override the adaptive margin threshold (0-100 points).
+   * When undefined, calibrated automatically from manifest score distribution.
+   */
+  adaptiveMarginOverride?: number
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
 
 export interface EngineResult {
-  match: MatchResult
-  resolution: ResolveResult
+  match:       MatchResult
+  resolution:  ResolveResult
   resolvedVia: 'cache' | 'keyword' | 'llm'
-  durationMs: number
-  /** Full execution trace — always present */
-  trace: ExecutionTrace
+  durationMs:  number
+  trace:       ExecutionTrace
+  /**
+   * Routing confidence verdict.
+   * - 'clear'     — winner is significantly ahead of second-best
+   * - 'marginal'  — winner is above threshold but close to second-best
+   * - 'uncertain' — OOS, near-threshold score, or two candidates nearly tied
+   */
+  verdict: 'clear' | 'marginal' | 'uncertain'
+  /** Winner score minus second-best score. 0 when OOS or single capability. */
+  margin:  number
 }
 
 // ─── CapmanEngine ─────────────────────────────────────────────────────────────
@@ -151,6 +172,8 @@ export class CapmanEngine {
   private bm25Ceiling: number
   private bm25K1:      number
   private bm25B:       number
+  private marginAwareLLM:    boolean
+  private adaptiveMargin:    number
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -184,6 +207,8 @@ export class CapmanEngine {
     this.bm25B     = options.bm25B  ?? 0.75
     this.bm25Index = buildBM25Index(options.manifest.capabilities)
     this.bm25Ceiling = this.calibrateBM25Ceiling()
+    this.marginAwareLLM = options.marginAwareLLM ?? false
+    this.adaptiveMargin = options.adaptiveMarginOverride ?? this.calibrateAdaptiveMargin()
 
     // Cache — default MemoryCache (no filesystem writes), or disabled with false
     // Use FileCache or ComboCache explicitly for persistence across restarts
@@ -259,12 +284,15 @@ export class CapmanEngine {
           resolvedVia: 'cache',
           totalMs: Date.now() - start,
         }
+        const { verdict: cacheVerdict, margin: cacheMargin } = this.computeVerdict(matchWithFreshParams)
         const result: EngineResult = {
-          match: matchWithFreshParams,
+          match:       matchWithFreshParams,
           resolution,
           resolvedVia: 'cache',
-          durationMs: Date.now() - start,
+          durationMs:  Date.now() - start,
           trace,
+          verdict:     cacheVerdict,
+          margin:      cacheMargin,
         }
         await this.recordLearning(query, matchWithFreshParams, 'cache')
         return result
@@ -297,7 +325,23 @@ export class CapmanEngine {
       })
     }
     
-    // ── Step 4: Resolve ──────────────────────────────────────────────────────
+    // ── Step 4a: Compute verdict + optional margin-aware LLM disambiguation ──
+    let { verdict, margin } = this.computeVerdict(matchResult)
+
+    if (
+      verdict === 'marginal' &&
+      this.marginAwareLLM &&
+      this.llm &&
+      this.mode !== 'cheap'
+    ) {
+      matchResult = await this.disambiguateLLM(query, matchResult, steps)
+      // Recompute verdict after disambiguation
+      const recomputed = this.computeVerdict(matchResult)
+      verdict = recomputed.verdict
+      margin  = recomputed.margin
+    }
+
+    // ── Step 4b: Resolve ──────────────────────────────────────────────────────
     const resolveStart = Date.now()
     const resolution = await _resolve(
       matchResult,
@@ -310,7 +354,7 @@ export class CapmanEngine {
       durationMs: Date.now() - resolveStart,
       detail: resolution.error ?? `via ${resolution.resolverType}`,
     })
-
+    
     // ── Step 5: Cache after successful resolution ────────────────────────────
     // Write under two keys:
     // 1. normalizeQuery — exact phrasing lookup for this query
@@ -370,11 +414,13 @@ export class CapmanEngine {
     }
 
     return {
-      match: matchResult,
+      match:       matchResult,
       resolution,
       resolvedVia,
-      durationMs: Date.now() - start,
+      durationMs:  Date.now() - start,
       trace,
+      verdict,
+      margin,
     }
   }
 
@@ -440,6 +486,7 @@ export class CapmanEngine {
     this.manifest    = manifest
     this.bm25Index   = buildBM25Index(manifest.capabilities)
     this.bm25Ceiling = this.calibrateBM25Ceiling()
+    this.adaptiveMargin = this.calibrateAdaptiveMargin()
     await this.clearCache()
   }
 
@@ -952,4 +999,130 @@ export class CapmanEngine {
     }
     return max > 0 ? max : 100
   }
+
+  /**
+   * Calibrates the adaptive margin threshold from the manifest's own score
+   * distribution. Runs each capability's first example against all other
+   * capabilities to find the typical inter-capability score spread.
+   * Dense overlapping vocabulary → lower margin (harder to separate).
+   * Sparse vocabulary → higher margin (easier to separate).
+   */
+  private calibrateAdaptiveMargin(): number {
+    if (this.manifest.capabilities.length < 2) return 20
+
+    const margins: number[] = []
+    const fuzzyOpts = {
+      fuzzyMatch:     false,  // calibration uses keyword only — deterministic
+      bm25Index:      this.bm25Index,
+      bm25Ceiling:    this.bm25Ceiling,
+      bm25K1:         this.bm25K1,
+      bm25B:          this.bm25B,
+    }
+
+    for (const cap of this.manifest.capabilities) {
+      if (!cap.examples?.length) continue
+      const result = _match(cap.examples[0], this.manifest, fuzzyOpts)
+      const sorted = [...result.candidates].sort((a, b) => b.score - a.score)
+      if (sorted.length >= 2) {
+        margins.push(sorted[0].score - sorted[1].score)
+      }
+    }
+
+    if (margins.length === 0) return 20
+
+    // Use 25th percentile of margins as the threshold — manifests where
+    // capabilities are naturally close together get a tighter threshold
+    margins.sort((a, b) => a - b)
+    const p25 = margins[Math.floor(margins.length * 0.25)]
+    return Math.max(10, Math.min(30, Math.round(p25 * 0.6)))
+  }
+
+  private computeVerdict(matchResult: MatchResult): { verdict: EngineResult['verdict']; margin: number } {
+    if (!matchResult.capability) return { verdict: 'uncertain', margin: 0 }
+
+    const sorted = [...matchResult.candidates].sort((a, b) => b.score - a.score)
+    const best   = sorted[0]?.score ?? 0
+    const second = sorted[1]?.score ?? 0
+    const margin = best - second
+
+    if (best < 60)                        return { verdict: 'uncertain', margin }
+    if (margin < this.adaptiveMargin)     return { verdict: 'marginal',  margin }
+    return { verdict: 'clear', margin }
+  }
+
+  /**
+     * Targeted disambiguation between top-2 candidates.
+     * Sends ~200 tokens instead of full manifest (~4000 tokens) — 93% cost reduction.
+     * Returns updated matchResult with LLM-preferred winner, or original on failure.
+     */
+    private async disambiguateLLM(
+      query:       string,
+      matchResult: MatchResult,
+      steps:       TraceStep[]
+    ): Promise<MatchResult> {
+      if (!this.llm) return matchResult
+
+      const sorted = [...matchResult.candidates]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 2)
+
+      if (sorted.length < 2) return matchResult
+
+      const capA = this.manifest.capabilities.find(c => c.id === sorted[0].capabilityId)
+      const capB = this.manifest.capabilities.find(c => c.id === sorted[1].capabilityId)
+      if (!capA || !capB) return matchResult
+
+      const skipReason = this.checkLLMAllowed()
+      if (skipReason) {
+        logger.warn(`Disambiguation LLM skipped — ${skipReason}`)
+        steps.push({ type: 'llm_match', status: 'skip', durationMs: 0, detail: `disambiguation skipped: ${skipReason}` })
+        return matchResult
+      }
+
+      const prompt = `Two capabilities are close matches for this query. Pick the best one.
+
+  Query: ${JSON.stringify({ user_query: query })}
+
+  Option A: ${capA.id} — ${sanitizeForPrompt(capA.description, 150)}
+  Option B: ${capB.id} — ${sanitizeForPrompt(capB.description, 150)}
+
+  Respond ONLY with valid JSON:
+  { "winner": "<capability_id>", "confidence": <0-100>, "reasoning": "<one sentence>" }`
+
+      const t = Date.now()
+      try {
+        const raw    = await this.llm(prompt)
+        const clean  = raw.replace(/```json|```/g, '').trim()
+        const parsed = JSON.parse(clean)
+
+        this.recordLLMSuccess()
+
+        const winner = this.manifest.capabilities.find(c => c.id === parsed.winner)
+        if (!winner) {
+          steps.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t, detail: 'disambiguation returned unknown id' })
+          return matchResult
+        }
+
+        steps.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `disambiguation: ${winner.id} (${parsed.confidence}%)` })
+
+        const confidence = typeof parsed.confidence === 'number' && !isNaN(parsed.confidence)
+          ? Math.min(100, Math.max(0, Math.round(parsed.confidence)))
+          : matchResult.confidence  // fallback to original if LLM returned bad value
+
+         return {
+          ...matchResult,
+          capability:      winner,
+          confidence,
+          intent:          resolverToIntent(winner),
+          extractedParams: extractParams(query, winner),
+          candidates:      matchResult.candidates.map(c => ({ ...c, matched: c.capabilityId === winner.id })),
+          reasoning:       parsed.reasoning ?? `Disambiguated to "${winner.id}"`,
+        }
+      } catch (err) {
+        const isParseError = err instanceof LLMParseError
+        if (!isParseError) this.recordLLMFailure()
+        steps.push({ type: 'llm_match', status: 'fail', durationMs: Date.now() - t, detail: String(err) })
+        return matchResult
+      }
+    }
 }
