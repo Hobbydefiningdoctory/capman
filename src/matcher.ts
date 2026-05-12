@@ -23,6 +23,54 @@ export const STOPWORDS = new Set([
   'just', 'some', 'any', 'there', 'their', 'them', 'they',
 ])
 
+// ─── Type Patterns ────────────────────────────────────────────────────────────
+
+/**
+ * Regex patterns for common param types.
+ * Used when a CapabilityParam has `pattern` set to a named type.
+ */
+export const TYPE_PATTERNS: Record<string, RegExp> = {
+  email:   /\b[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}\b/,
+  date:    /\b\d{4}-\d{2}-\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}\b/i,
+  orderId: /\b[A-Z]{2,}-?\d{4,}\b|\b\d{6,}\b/,
+  url:     /https?:\/\/[^\s]+/,
+}
+
+/**
+ * Extracts a value from a query using an example template pattern.
+ * e.g. template "order {orderId}", query "track order 12345" → "12345"
+ * e.g. template "booking {ref}", query "cancel booking ABC-001" → "ABC-001"
+ */
+function extractFromTemplate(query: string, template: string, paramName: string): string | null {
+  // Split template on {paramName} to get prefix and suffix
+  const placeholder = `{${paramName}}`
+  const idx = template.indexOf(placeholder)
+  if (idx === -1) return null
+
+  const prefix = template.slice(0, idx).trim().toLowerCase()
+  const suffix = template.slice(idx + placeholder.length).trim().toLowerCase()
+
+  const q = query.toLowerCase()
+
+  if (prefix) {
+    const prefixIdx = q.indexOf(prefix)
+    if (prefixIdx === -1) return null
+    const after = query.slice(prefixIdx + prefix.length).trim()
+    const tokens = after.split(/\s+/).filter(t => t.length > 0)
+    if (!tokens.length) return null
+    // If there's a suffix, find it and take what's between
+    if (suffix) {
+      const suffixIdx = after.toLowerCase().indexOf(suffix)
+      if (suffixIdx > 0) {
+        return after.slice(0, suffixIdx).trim().split(/\s+/)[0] ?? null
+      }
+    }
+    return tokens[0].replace(/[^a-zA-Z0-9\-_.@]/g, '') || null
+  }
+
+  return null
+}
+
 // ─── Stem cache ───────────────────────────────────────────────────────────────
 // Each word stemmed exactly once per process — O(1) on repeat lookups
 const stemCache = new Map<string, string>()
@@ -262,6 +310,26 @@ export function extractParams(query: string, cap: Capability): Record<string, st
     if (param.source !== 'user_query') {
       result[param.name] = null
       continue
+    }
+
+    // ── Pattern extraction (highest priority) ─────────────────────────────
+    if (param.pattern) {
+      const namedPattern = TYPE_PATTERNS[param.pattern]
+      if (namedPattern) {
+        // Named type pattern — match regex directly against full query
+        const match = query.match(namedPattern)
+        if (match) {
+          result[param.name] = match[0]
+          continue
+        }
+      } else if (param.pattern.includes(`{${param.name}}`)) {
+        // Example template — positional extraction
+        const extracted = extractFromTemplate(query, param.pattern, param.name)
+        if (extracted) {
+          result[param.name] = extracted
+          continue
+        }
+      }
     }
 
     // Try to extract value after known keywords

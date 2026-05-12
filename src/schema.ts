@@ -8,6 +8,7 @@ const CapabilityParamSchema = z.object({
   required:    z.boolean(),
   source:      z.enum(['user_query', 'session']),
   default:     z.union([z.string(), z.number(), z.boolean()]).optional(),
+  pattern:     z.string().optional(),
 })
 
 // ─── Resolver Schemas ─────────────────────────────────────────────────────────

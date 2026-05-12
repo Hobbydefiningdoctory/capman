@@ -6,11 +6,17 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 // ─── Parameter Definition ─────────────────────────────────────────────────────
 
 export interface CapabilityParam {
-  name: string
+  name:        string
   description: string
-  required: boolean
-  source: 'user_query' | 'session'
-  default?: string | number | boolean
+  required:    boolean
+  source:      'user_query' | 'session'
+  /**
+   * Optional extraction hint. Either a named type or an example template.
+   * Named types: 'email' | 'date' | 'orderId' | 'url'
+   * Example template: "order {paramName}" — extracts token after "order"
+   * When provided, pattern matching runs before keyword heuristics.
+   */
+  pattern?:    string
 }
 
 // ─── Resolver Configs ─────────────────────────────────────────────────────────

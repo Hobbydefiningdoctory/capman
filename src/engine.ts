@@ -140,15 +140,15 @@ export interface EngineResult {
   resolvedVia: 'cache' | 'keyword' | 'llm'
   durationMs:  number
   trace:       ExecutionTrace
+  verdict:     'clear' | 'marginal' | 'uncertain'
+  margin:      number
   /**
-   * Routing confidence verdict.
-   * - 'clear'     — winner is significantly ahead of second-best
-   * - 'marginal'  — winner is above threshold but close to second-best
-   * - 'uncertain' — OOS, near-threshold score, or two candidates nearly tied
+   * Required params that could not be extracted from the query.
+   * Only populated when extraction failed AND LLM was not used.
+   * When present, the agent should prompt the user for these values.
+   * Undefined when all required params were successfully extracted.
    */
-  verdict: 'clear' | 'marginal' | 'uncertain'
-  /** Winner score minus second-best score. 0 when OOS or single capability. */
-  margin:  number
+  missingParams?: string[]
 }
 
 // ─── CapmanEngine ─────────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ export class CapmanEngine {
           resolvedVia: 'cache',
           totalMs: Date.now() - start,
         }
-        const { verdict: cacheVerdict, margin: cacheMargin } = this.computeVerdict(matchWithFreshParams)
+        const { verdict: cacheVerdict, margin: cacheMargin} = this.computeVerdict(matchWithFreshParams)
         const result: EngineResult = {
           match:       matchWithFreshParams,
           resolution,
@@ -293,6 +293,7 @@ export class CapmanEngine {
           trace,
           verdict:     cacheVerdict,
           margin:      cacheMargin,
+          missingParams: undefined
         }
         await this.recordLearning(query, matchWithFreshParams, 'cache')
         return result
@@ -332,7 +333,7 @@ export class CapmanEngine {
       verdict === 'marginal' &&
       this.marginAwareLLM &&
       this.llm &&
-      this.mode !== 'cheap'
+      this.mode === 'balanced'
     ) {
       matchResult = await this.disambiguateLLM(query, matchResult, steps)
       // Recompute verdict after disambiguation
@@ -371,6 +372,17 @@ export class CapmanEngine {
       await this.cache.set(queryKey, matchResult)
       await this.cache.set(capKey, matchResult)
       // capKey always starts with 'cap:' — structurally distinct from queryKey
+    }
+
+    // ── Step 5b: Compute missingParams ───────────────────────────────────────
+    // Populated when required params could not be extracted and LLM was not used.
+    // Signals to the agent that it should prompt the user for these values.
+    let missingParams: string[] | undefined
+    if (matchResult.capability && resolvedVia !== 'llm') {
+      const missing = matchResult.capability.params
+        .filter(p => p.source === 'user_query' && p.required && matchResult.extractedParams[p.name] === null)
+        .map(p => p.name)
+      if (missing.length > 0) missingParams = missing
     }
 
     // ── Step 6: Build reasoning array ────────────────────────────────────────
@@ -421,6 +433,7 @@ export class CapmanEngine {
       trace,
       verdict,
       margin,
+      missingParams,
     }
   }
 
