@@ -375,16 +375,63 @@ export class CapmanEngine {
     }
 
     // ── Step 5b: Compute missingParams ───────────────────────────────────────
-    // Populated when required params could not be extracted and LLM was not used.
-    // Signals to the agent that it should prompt the user for these values.
+    // Spec: LLM attempts extraction first when available. missingParams is last resort.
     let missingParams: string[] | undefined
-    if (matchResult.capability && resolvedVia !== 'llm') {
-      const missing = matchResult.capability.params
-        .filter(p => p.source === 'user_query' && p.required && matchResult.extractedParams[p.name] === null)
-        .map(p => p.name)
-      if (missing.length > 0) missingParams = missing
-    }
 
+    if (matchResult.capability && resolvedVia !== 'llm') {
+      const cap        = matchResult.capability
+      const unresolved = cap.params.filter(
+        p => p.source === 'user_query' && p.required
+          && matchResult.extractedParams[p.name] === null
+      )
+
+      if (unresolved.length > 0 && this.llm && this.mode !== 'cheap') {
+        // LLM available — attempt targeted param extraction before declaring incomplete
+        const skipReason = this.checkLLMAllowed()
+        if (!skipReason) {
+          try {
+            const paramDescriptions = unresolved
+              .map(p => `- ${p.name}: ${p.description}`)
+              .join('\n')
+
+            const paramPrompt =
+              `Extract the following parameters from this user query.\n` +
+              `Query: ${JSON.stringify({ user_query: query })}\n\n` +
+              `Parameters to extract:\n${paramDescriptions}\n\n` +
+              `Respond ONLY with valid JSON: { "params": { "<name>": "<value or null>" } }`
+
+            const raw    = await this.llm(paramPrompt)
+            const clean  = raw.replace(/```json|```/g, '').trim()
+            const parsed = JSON.parse(clean)
+
+            this.recordLLMSuccess()
+            steps.push({
+              type: 'llm_match', status: 'pass', durationMs: 0,
+              detail: `param extraction: ${unresolved.map(p => p.name).join(', ')}`,
+            })
+
+            // Merge LLM-extracted values — validate type before accepting
+            for (const p of unresolved) {
+              const val = parsed?.params?.[p.name]
+              if (val && typeof val === 'string' && val.trim().length > 0) {
+                matchResult.extractedParams[p.name] = val.trim()
+              }
+            }
+          } catch {
+            // LLM param extraction failed — fall through to missingParams below
+          }
+        }
+      }
+
+      // After LLM attempt (or if skipped/unavailable), report what's still missing
+      const stillMissing = cap.params
+        .filter(p => p.source === 'user_query' && p.required
+                  && matchResult.extractedParams[p.name] === null)
+        .map(p => p.name)
+
+      if (stillMissing.length > 0) missingParams = stillMissing
+    }
+    
     // ── Step 6: Build reasoning array ────────────────────────────────────────
     const reasoning: string[] = []
     if (matchResult.candidates.length) {

@@ -68,6 +68,21 @@ function extractFromTemplate(query: string, template: string, paramName: string)
     return tokens[0].replace(/[^a-zA-Z0-9\-_.@]/g, '') || null
   }
 
+// Prefix is empty — placeholder is at start of template e.g. "{email} unsubscribe"
+  if (!prefix) {
+    if (suffix) {
+      // Find suffix in query — take what comes before it
+      const suffixIdx = query.toLowerCase().indexOf(suffix)
+      if (suffixIdx > 0) {
+        return query.slice(0, suffixIdx).trim().split(/\s+/).pop()
+          ?.replace(/[^a-zA-Z0-9\-_.@]/g, '') || null
+      }
+    }
+    // No prefix, no suffix — template is just "{paramName}"; take last meaningful word
+    const words = query.trim().split(/\s+/)
+    return words[words.length - 1]?.replace(/[^a-zA-Z0-9\-_.@]/g, '') || null
+  }
+
   return null
 }
 
