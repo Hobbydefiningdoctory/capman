@@ -389,12 +389,13 @@ export class CapmanEngine {
         // LLM available — attempt targeted param extraction before declaring incomplete
         const skipReason = this.checkLLMAllowed()
         if (!skipReason) {
-          try {
-            const paramDescriptions = unresolved
-              .map(p => `- ${p.name}: ${p.description}`)
-              .join('\n')
+            try {
+              const paramExtractionStart = Date.now()
+              const paramDescriptions = unresolved
+                .map(p => `- ${p.name}: ${p.description}`)
+                .join('\n')
 
-            const paramPrompt =
+              const paramPrompt =
               `Extract the following parameters from this user query.\n` +
               `Query: ${JSON.stringify({ user_query: query })}\n\n` +
               `Parameters to extract:\n${paramDescriptions}\n\n` +
@@ -405,9 +406,11 @@ export class CapmanEngine {
             const parsed = JSON.parse(clean)
 
             this.recordLLMSuccess()
-            steps.push({
-              type: 'llm_match', status: 'pass', durationMs: 0,
-              detail: `param extraction: ${unresolved.map(p => p.name).join(', ')}`,
+             steps.push({
+               type:      'llm_match',
+               status:    'pass',
+               durationMs: Date.now() - paramExtractionStart,
+               detail:    `param extraction: ${unresolved.map(p => p.name).join(', ')}`,
             })
 
             // Merge LLM-extracted values — validate type before accepting
@@ -1066,6 +1069,11 @@ export class CapmanEngine {
    * capabilities to find the typical inter-capability score spread.
    * Dense overlapping vocabulary → lower margin (harder to separate).
    * Sparse vocabulary → higher margin (easier to separate).
+   *
+   * Complexity: O(capabilities²) — runs at constructor time and on loadManifest().
+   * For manifests with ≤100 capabilities this is negligible (<10ms).
+   * For very large manifests (500+ capabilities), consider passing
+   * `adaptiveMarginOverride` to skip calibration.
    */
   private calibrateAdaptiveMargin(): number {
     if (this.manifest.capabilities.length < 2) return 20

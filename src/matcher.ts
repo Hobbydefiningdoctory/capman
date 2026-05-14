@@ -87,7 +87,11 @@ function extractFromTemplate(query: string, template: string, paramName: string)
 }
 
 // ─── Stem cache ───────────────────────────────────────────────────────────────
-// Each word stemmed exactly once per process — O(1) on repeat lookups
+// Each word stemmed exactly once per process — O(1) on repeat lookups.
+// Module-level — persists for the process lifetime. Vocabulary in production
+// is finite (capability names + user query vocabulary) so growth is bounded
+// in practice. In test environments with synthetic random strings, this may
+// grow larger but remains functionally harmless.
 const stemCache = new Map<string, string>()
 
 /**
