@@ -96,10 +96,11 @@ export const CapmanConfigSchema = z.object({
 // ─── Manifest Schema ──────────────────────────────────────────────────────────
 
 export const ManifestSchema = z.object({
-  version:      z.string(),
-  app:          z.string().min(1),
-  generatedAt:  z.string().datetime(),
-  capabilities: z.array(CapabilitySchema).min(1),
+  schemaVersion: z.string().min(1, 'schemaVersion is required'),
+  version:       z.string(),
+  app:           z.string().min(1),
+  generatedAt:   z.string().datetime(),
+  capabilities:  z.array(CapabilitySchema).min(1),
 })
 
 // ─── Validation helpers ───────────────────────────────────────────────────────

@@ -316,6 +316,7 @@ export class CapmanEngine {
     matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
     // ── Step 3: Privacy check ────────────────────────────────────────────────
+    let privacyFailed = false
     if (matchResult.capability) {
       const privacyError = checkPrivacy(matchResult.capability, this.auth)
       steps.push({
@@ -324,6 +325,10 @@ export class CapmanEngine {
         durationMs: 0,
         detail:    privacyError ?? `level: ${matchResult.capability.privacy.level}`,
       })
+      // Short-circuit: if privacy fails, skip disambiguation to avoid burning an LLM
+      // call on a request that _resolve() will block anyway. privacyFailed propagates
+      // to Step 4a so the mode guard check is clean and explicit.
+      if (privacyError) privacyFailed = true
     }
     
     // ── Step 4a: Compute verdict + optional margin-aware LLM disambiguation ──
@@ -333,7 +338,8 @@ export class CapmanEngine {
       verdict === 'marginal' &&
       this.marginAwareLLM &&
       this.llm &&
-      this.mode === 'balanced'
+      !privacyFailed &&
+        (this.mode === 'balanced' || this.mode === 'accurate')
     ) {
       matchResult = await this.disambiguateLLM(query, matchResult, steps)
       // Recompute verdict after disambiguation
@@ -420,8 +426,16 @@ export class CapmanEngine {
                 matchResult.extractedParams[p.name] = val.trim()
               }
             }
-          } catch {
-            // LLM param extraction failed — fall through to missingParams below
+          } catch (err) {
+            // Always refund the rate-limit slot — the call failed, it should
+            // not count against the per-minute quota.
+            this.llmCallsThisMinute = Math.max(0, this.llmCallsThisMinute - 1)
+            // Only open the circuit breaker for hard failures, not JSON parse errors —
+            // a bad LLM response format is a model issue, not a connectivity issue.
+            const isParseError = err instanceof SyntaxError
+            if (!isParseError) this.recordLLMFailure()
+            logger.warn(`LLM param extraction failed: ${err instanceof Error ? err.message : String(err)}`)
+            // fall through to missingParams below
           }
         }
       }
@@ -512,25 +526,43 @@ export class CapmanEngine {
   }
 
   private checkManifestVersion(manifest: Manifest): void {
-      if (!manifest.version) return
-      const SEMVER_RE = /^\d+\.\d+\.\d+$/
-      if (SEMVER_RE.test(manifest.version) && SEMVER_RE.test(VERSION)) {
-        const [mMaj, mMin] = manifest.version.split('.').map(Number)
-        const [eMaj, eMin] = VERSION.split('.').map(Number)
-        if (mMaj !== eMaj || mMin !== eMin) {
-          console.warn(
-            `[capman] Manifest version "${manifest.version}" was generated with a ` +
-            `different engine version than "${VERSION}". This is usually fine across patch versions. ` +
-            `If you experience unexpected matching issues, regenerate with: npx capman generate`
-          )
-        }
-      } else if (manifest.version !== VERSION) {
+    // ── Schema version check ─────────────────────────────────────────────────
+    // schemaVersion tracks manifest format — "1" for v0.6+.
+    // Manifests without schemaVersion are pre-v0.6 — warn but allow.
+    const CURRENT_SCHEMA_VERSION = '1'
+    if (!manifest.schemaVersion) {
+      console.warn(
+        `[capman] Manifest is missing schemaVersion — it was generated with capman < 0.6. ` +
+        `Regenerate with: npx capman generate`
+      )
+    } else if (manifest.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+      console.warn(
+        `[capman] Manifest schemaVersion "${manifest.schemaVersion}" differs from ` +
+        `engine's expected "${CURRENT_SCHEMA_VERSION}". ` +
+        `Regenerate with: npx capman generate`
+      )
+    }
+
+    // ── Package version check ────────────────────────────────────────────────
+    if (!manifest.version) return
+    const SEMVER_RE = /^\d+\.\d+\.\d+$/
+    if (SEMVER_RE.test(manifest.version) && SEMVER_RE.test(VERSION)) {
+      const [mMaj, mMin] = manifest.version.split('.').map(Number)
+      const [eMaj, eMin] = VERSION.split('.').map(Number)
+      if (mMaj !== eMaj || mMin !== eMin) {
         console.warn(
-          `[capman] Manifest version "${manifest.version}" could not be compared ` +
-          `to engine version "${VERSION}" — version strings are not valid semver.`
+          `[capman] Manifest was generated with capman "${manifest.version}" ` +
+          `but engine is "${VERSION}". This is usually fine across patch versions. ` +
+          `If you experience unexpected matching issues, regenerate with: npx capman generate`
         )
       }
+    } else if (manifest.version !== VERSION) {
+      console.warn(
+        `[capman] Manifest version "${manifest.version}" could not be compared ` +
+        `to engine version "${VERSION}" — version strings are not valid semver.`
+      )
     }
+  }
 
     /**
      * Replaces the active manifest without creating a new engine instance.
@@ -1056,9 +1088,15 @@ export class CapmanEngine {
     let max = 0
     for (const cap of this.manifest.capabilities) {
       if (!cap.examples?.length) continue
-      const selfWords = new Set(tokenize(cap.examples[0]))
-      const raw = _scoreCapability(selfWords, cap, this.bm25Index, this.bm25K1, this.bm25B)
-      if (raw > max) max = raw
+      // Score ALL examples and take the highest — a capability with a generic
+      // first example but richer later ones would produce an under-calibrated
+      // ceiling if only examples[0] is used, compressing score spread for all
+      // other capabilities that normalize against that ceiling.
+      for (const example of cap.examples) {
+        const selfWords = new Set(tokenize(example))
+        const raw = _scoreCapability(selfWords, cap, this.bm25Index, this.bm25K1, this.bm25B)
+        if (raw > max) max = raw
+      }
     }
     return max > 0 ? max : 100
   }
@@ -1089,10 +1127,14 @@ export class CapmanEngine {
 
     for (const cap of this.manifest.capabilities) {
       if (!cap.examples?.length) continue
-      const result = _match(cap.examples[0], this.manifest, fuzzyOpts)
-      const sorted = [...result.candidates].sort((a, b) => b.score - a.score)
-      if (sorted.length >= 2) {
-        margins.push(sorted[0].score - sorted[1].score)
+      // Use all examples and take the maximum margin — same rationale as
+      // calibrateBM25Ceiling(): a weak first example skews the calibration.
+      for (const example of cap.examples) {
+        const result = _match(example, this.manifest, fuzzyOpts)
+        const sorted = [...result.candidates].sort((a, b) => b.score - a.score)
+        if (sorted.length >= 2) {
+          margins.push(sorted[0].score - sorted[1].score)
+        }
       }
     }
 

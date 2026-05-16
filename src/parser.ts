@@ -113,7 +113,18 @@ async function loadSpec(source: string): Promise<OpenAPISpec> {
   }
 
   // Local file
-  const resolved = path.resolve(process.cwd(), source)
+  const cwd = process.cwd()
+  const resolved = path.resolve(cwd, source)
+  // Guard against path traversal — same check used by FileCache and FileLearningStore.
+  // Prevents parseOpenAPI('../../etc/passwd') from reading arbitrary files when
+  // the source argument comes from user input (CLI args, UI, CI scripts).
+  const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
+  if (!resolved.startsWith(allowedPrefix)) {
+    throw new Error(
+      `Spec path "${source}" resolves outside the working directory.\n` +
+      `Resolved: ${resolved}\nAllowed:  ${cwd}`
+    )
+  }
   if (!fs.existsSync(resolved)) {
     throw new Error(`Spec file not found: ${resolved}`)
   }
@@ -189,11 +200,20 @@ function convertSpec(spec: OpenAPISpec): ParseResult {
         continue
       }
 
-      // Check for duplicate IDs
-      const existing = capabilities.find(c => c.id === result.id)
-      if (existing) {
-        result.id = `${result.id}_${method.toLowerCase()}`
-        warnings.push(`Duplicate ID resolved: ${result.id}`)
+      // De-conflict duplicate IDs — loop until the candidate ID is unique.
+      // A single find() check is insufficient: if two operations both produce
+      // `get_user`, the second becomes `get_user_get`. A third `get_user` would
+      // then collide with `get_user_get` only when it also uses GET — the general
+      // multi-collision case is only caught by looping.
+      let candidateId = result.id
+      let dedupeCount = 0
+      while (capabilities.find(c => c.id === candidateId)) {
+        dedupeCount++
+        candidateId = `${result.id}_${method.toLowerCase()}${dedupeCount > 1 ? `_${dedupeCount}` : ''}`
+      }
+      if (candidateId !== result.id) {
+        warnings.push(`Duplicate ID resolved: ${result.id} → ${candidateId}`)
+        result.id = candidateId
       }
 
       capabilities.push(result)
@@ -396,11 +416,11 @@ function extractBaseUrl(spec: OpenAPISpec): string {
     const base    = spec.basePath ?? ''
     return `${scheme}://${spec.host}${base}`.replace(/\/$/, '')
   }
-  logger.warn(
-      `No server URL found in spec — using placeholder "https://api.your-app.com". ` +
-      `Set baseUrl manually in the generated config before use.`
-    )
-    return 'https://api.your-app.com'
+  throw new Error(
+    `No server URL found in OpenAPI spec — cannot determine base URL.\n` +
+    `Add a "servers" entry (OpenAPI 3.x) or "host" + "basePath" (Swagger 2.x), ` +
+    `or set baseUrl manually in capman.config.js after generating.`
+  )
   }
 
 function sanitizeAppName(title: string): string {

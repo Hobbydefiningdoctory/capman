@@ -147,22 +147,35 @@ export interface BM25Index {
   N:     number
   /** Bigram sets per capability — post-stopword, post-stem, examples only */
   bigrams: Record<string, Set<string>>
+  /**
+   * Pre-computed token arrays per capability, per field.
+   * Avoids re-tokenizing capability text on every scoreCapability() call.
+   * At 50 capabilities × 100 req/s, that is 5,000 redundant tokenization
+   * calls per second — each involving stem() and split/filter chains.
+   */
+  capTokens: Record<string, { examples: string[]; description: string[]; name: string[] }>
 }
 
 /** Build a BM25 index over all capabilities. Call once at manifest load. */
 export function buildBM25Index(capabilities: Capability[]): BM25Index {
   const N = capabilities.length
-  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0, bigrams: {}, }
+  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0, bigrams: {}, capTokens: {}, }
 
   const df: Record<string, number> = {}
   let totalExLen = 0
   let totalDescLen = 0
   let totalNameLen = 0
 
+  // Pre-compute token arrays for every capability in a single pass.
+  // scoreCapability() reads from capTokens instead of re-tokenizing on every call.
+  const capTokens: BM25Index['capTokens'] = {}
+
   for (const cap of capabilities) {
     const exTokens   = tokenize((cap.examples ?? []).join(' '))
     const descTokens = tokenize(cap.description)
     const nameTokens = tokenize(cap.name)
+
+    capTokens[cap.id] = { examples: exTokens, description: descTokens, name: nameTokens }
 
     totalExLen   += exTokens.length
     totalDescLen += descTokens.length
@@ -195,6 +208,7 @@ export function buildBM25Index(capabilities: Capability[]): BM25Index {
     },
     N,
     bigrams,
+    capTokens,
   }
 }
 
@@ -212,9 +226,18 @@ export function scoreCapability(
 ): number {
   if (index.N === 0) return 0
 
-  const score = bm25Field(qWordSet, tokenize((cap.examples ?? []).join(' ')), index, 'examples',    k1, b) * 0.6
-              + bm25Field(qWordSet, tokenize(cap.description),                 index, 'description', k1, b) * 0.3
-              + bm25Field(qWordSet, tokenize(cap.name),                        index, 'name',        k1, b) * 0.1
+  // Use pre-computed token arrays from the index — avoids re-tokenizing
+  // capability text on every call. Falls back to live tokenization only when
+  // scoreCapability() is called outside CapmanEngine (e.g. unit tests that
+  // build a BM25Index manually without capTokens populated).
+  const tokens = index.capTokens[cap.id]
+  const exTokens   = tokens?.examples    ?? tokenize((cap.examples ?? []).join(' '))
+  const descTokens = tokens?.description ?? tokenize(cap.description)
+  const nameTokens = tokens?.name        ?? tokenize(cap.name)
+
+  const score = bm25Field(qWordSet, exTokens,   index, 'examples',    k1, b) * 0.6
+              + bm25Field(qWordSet, descTokens,  index, 'description', k1, b) * 0.3
+              + bm25Field(qWordSet, nameTokens,  index, 'name',        k1, b) * 0.1
 
   return score
 }
@@ -289,13 +312,18 @@ export function resolverToIntent(cap: Capability): MatchResult['intent'] {
 /**
  * Strips characters that could break LLM prompt structure from
  * capability field values before injection into the system prompt.
- * Removes control characters, newlines, and delimiter-like sequences.
+ * Removes control characters, newlines, delimiter sequences, and braces
+ * anywhere in the string (not just at line starts) to resist prompt injection
+ * from third-party OpenAPI spec content ingested via parseOpenAPI().
  */
 export function sanitizeForPrompt(value: string, maxLen: number): string {
   return value
-    .replace(/[\r\n\t]/g, ' ')           // newlines → space
+    .replace(/[\r\n\t]/g, ' ')           // newlines/tabs → space
     .replace(/---+/g, '—')               // horizontal rules → em dash
-    .replace(/^\s*[{}\[\]]/gm, ' ')      // leading braces/brackets → space
+    .replace(/[{}\[\]]/g, ' ')           // all braces/brackets anywhere → space (was: leading only)
+    .split(' ')                           // per-word cap — limits injection payload per token
+    .map(w => w.slice(0, 200))           // no single token longer than 200 chars
+    .join(' ')
     .replace(/\s+/g, ' ')                // collapse whitespace
     .trim()
     .slice(0, maxLen)
@@ -673,7 +701,13 @@ ${JSON.stringify({ user_query: query })}
   // Build full candidate list — all capabilities scored, LLM winner marked as matched.
   // This aligns the shape with keyword match results and allows the learning boost
   // to surface alternatives if the LLM made a wrong call.
-  const llmConfidence = effectivelyOOS ? 0 : parsed.confidence as number
+  // Clamp and round confidence — LLM may return values outside 0–100 with
+  // misconfigured models or prompt drift. Unclamped values corrupt learning
+  // weights (weight = confidence/100 can exceed 1.0) and verdict margins.
+  // disambiguateLLM() already does this; apply the same treatment here.
+  const llmConfidence = effectivelyOOS
+    ? 0
+    : Math.min(100, Math.max(0, Math.round(parsed.confidence as number)))
   const allCandidates: MatchCandidate[] = manifest.capabilities.map(c => ({
     capabilityId: c.id,
     score:        c.id === capability?.id ? llmConfidence : 0,

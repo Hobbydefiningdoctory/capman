@@ -203,8 +203,15 @@ describe('parseOpenAPI()', () => {
   })
 
   it('throws on missing file', async () => {
-    await expect(parseOpenAPI('/nonexistent/path/spec.json'))
+    // Relative path that resolves within cwd but does not exist
+    await expect(parseOpenAPI('nonexistent-spec.json'))
       .rejects.toThrow('Spec file not found')
+  })
+
+  it('throws on path traversal outside cwd', async () => {
+    // Absolute path resolves outside cwd — must be blocked by traversal guard (H3)
+    await expect(parseOpenAPI('/nonexistent/path/spec.json'))
+      .rejects.toThrow('resolves outside the working directory')
   })
 
   it('does not classify manage/manager operations as admin', async () => {

@@ -106,6 +106,8 @@ export class FileCache implements CacheStore {
   private store:       Map<string, CacheEntry> = new Map()
   private loadPromise: Promise<void> | null    = null
   private saveQueue:   Promise<void>           = Promise.resolve()
+  private dirty:       boolean                 = false
+  private saveTimer:   ReturnType<typeof setTimeout> | null = null
 
   constructor(filePath = '.capman/cache.json') {
     const cwd      = process.cwd()
@@ -141,12 +143,21 @@ export class FileCache implements CacheStore {
         // e.g. "Show me articles" and "show me articles" collapse to the same key.
         const normalized = new Map<string, CacheEntry>()
         for (const [k, v] of Object.entries(parsed)) {
-          // Structured keys (cap:/query: prefix from buildCacheKey) are already
-          // canonical — normalizeQuery strips their colons and equals signs.
-          const storeKey = (k.startsWith('cap:') || k.startsWith('query:'))
-            ? k
-            : normalizeQuery(k)
-          normalized.set(storeKey, v as CacheEntry)
+          // Validate entry structure before accepting — a corrupted entry
+          // (null result, missing cachedAt) would cause runtime errors deep
+          // in the engine when capability fields are accessed.
+          if (
+            v !== null && typeof v === 'object' &&
+            'result' in (v as object) && (v as CacheEntry).result !== null &&
+            typeof (v as CacheEntry).cachedAt === 'string'
+          ) {
+            const storeKey = (k.startsWith('cap:') || k.startsWith('query:'))
+              ? k
+              : normalizeQuery(k)
+            normalized.set(storeKey, v as CacheEntry)
+          } else {
+            logger.warn(`File cache: skipping invalid entry for key "${k}"`)
+          }
         }
         this.store = normalized
         logger.debug(`File cache loaded: ${this.store.size} entries`)
@@ -165,6 +176,25 @@ export class FileCache implements CacheStore {
   private save(): Promise<void> {
     this.saveQueue = this.saveQueue.then(() => this._doSave())
     return this.saveQueue
+  }
+
+  /**
+   * Debounced save — batches evictions and rapid writes into a single disk flush.
+   * Prevents a flurry of full-file writes when many TTL-expired entries are read
+   * in quick succession (e.g. after a server restart with a stale cache file).
+   * Mirrors the scheduleSave() pattern in FileLearningStore.
+   */
+  private scheduleSave(urgencyMs = 5_000): void {
+    this.dirty = true
+    if (!this.saveTimer) {
+      this.saveTimer = setTimeout(() => {
+        this.saveTimer = null
+        if (this.dirty) {
+          this.dirty = false
+          this.save()
+        }
+      }, urgencyMs)
+    }
   }
 
   private async _doSave(): Promise<void> {
@@ -186,7 +216,9 @@ export class FileCache implements CacheStore {
 
     if (ttlMs && Date.now() - new Date(entry.cachedAt).getTime() > ttlMs) {
       this.store.delete(key)
-      await this.save()  // eviction must be persisted
+      // Batch the eviction write — immediate save() on every expired read causes
+      // a full file rewrite per request during cold-start with a stale cache.
+      this.scheduleSave()
       logger.debug(`Cache entry expired (file): "${key}"`)
       return null
     }

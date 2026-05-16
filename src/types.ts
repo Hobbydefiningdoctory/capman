@@ -67,9 +67,16 @@ export interface Capability {
 // ─── Manifest ─────────────────────────────────────────────────────────────────
 
 export interface Manifest {
-  version: string
-  app: string
-  generatedAt: string
+  /**
+   * Manifest format version — independent of the capman package version.
+   * Consumers use this to determine which parser/validator to apply.
+   * "1" = v0.6+ schema (tags, lifecycle, typed params, servers, etc.)
+   */
+  schemaVersion: string
+  /** capman package version that generated this manifest */
+  version:      string
+  app:          string
+  generatedAt:  string
   capabilities: Capability[]
 }
 

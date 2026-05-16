@@ -52,6 +52,13 @@ export interface LearningEntry {
   extractedParams: Record<string, string | null>
   resolvedVia: 'keyword' | 'llm' | 'cache'
   timestamp: string
+  /**
+   * Confidence-derived weight stored at record time (confidence / 100, floor 0.1).
+   * Used by subtract() to reverse the exact contribution made by update(),
+   * preventing index drift when high-confidence entries are pruned.
+   * Optional for backwards-compatibility with persisted entries written before v0.5.5.
+   */
+  weight?: number
 }
 
 // ─── Keyword Stats ────────────────────────────────────────────────────────────
@@ -126,6 +133,10 @@ class LearningIndex {
       // more signal than a 51% borderline match. Floor of 0.1 ensures
       // borderline matches still contribute, just proportionally less.
       const weight = Math.max(0.1, entry.confidence / 100)
+      // Store weight on the entry so subtract() can reverse the exact amount.
+      // Without this, subtract() would have to use a hardcoded estimate (0.5)
+      // that causes index drift after pruning high-confidence entries.
+      entry.weight = weight
 
       const words = tokenize(entry.query)
       for (const word of words) {
@@ -149,11 +160,13 @@ class LearningIndex {
     // Keyword index cleanup
     const words = tokenize(entry.query)
       for (const word of words) {
-        if (!this.index[word]) continue
-        // Subtract estimated weight (0.5 average) — exact weight not stored.
-        // Minor drift on prune is acceptable; index is rebuilt when drift matters.
-        this.index[word][entry.capabilityId] =
-          (this.index[word][entry.capabilityId] ?? 0.5) - 0.5
+      if (!this.index[word]) continue
+      // Use the weight stored at record time for exact symmetric subtraction.
+      // Fallback recalculates from confidence for entries persisted before the
+      // weight field was added (backwards-compatible with older learning.json files).
+         const weight = entry.weight ?? Math.max(0.1, entry.confidence / 100)
+         this.index[word][entry.capabilityId] =
+         (this.index[word][entry.capabilityId] ?? weight) - weight
       if (this.index[word][entry.capabilityId] <= 0) {
         delete this.index[word][entry.capabilityId]
       }
@@ -233,8 +246,10 @@ export class FileLearningStore implements LearningStore {
       // Write to .tmp then rename — matches _doSave() pattern so they can't interleave
       fs.writeFileSync(tmp, payload)
       fs.renameSync(tmp, this.filePath)
-    } catch {
-      // Best-effort in exit handler
+    } catch (err) {
+      // Use process.stderr.write — never console.error in an exit handler,
+      // as stdout may already be flushed or closed at this point.
+      process.stderr.write(`[capman] Failed to flush learning store to ${this.filePath}: ${err}\n`)
     }
   }
 
@@ -269,11 +284,31 @@ export class FileLearningStore implements LearningStore {
     try {
       const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
       const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
-        this.entries = parsed.entries
-        this.learningIndex.rebuild(this.entries)
-        logger.debug(`Learning store loaded: ${this.entries.length} entries`)
-      } else {
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
+          // Validate each entry — corrupted entries (null capability, wrong types) must
+          // not propagate into the engine where they cause runtime errors deep in matching.
+          const validEntries: LearningEntry[] = []
+          let skipped = 0
+          for (const entry of parsed.entries) {
+            if (
+              entry !== null && typeof entry === 'object' &&
+              typeof entry.query === 'string' &&
+              (entry.capabilityId === null || typeof entry.capabilityId === 'string') &&
+              typeof entry.confidence === 'number' &&
+              typeof entry.resolvedVia === 'string'
+            ) {
+              validEntries.push(entry as LearningEntry)
+            } else {
+              skipped++
+            }
+          }
+          if (skipped > 0) {
+            logger.warn(`Learning store: skipped ${skipped} invalid entries during load`)
+          }
+          this.entries = validEntries
+          this.learningIndex.rebuild(this.entries)
+          logger.debug(`Learning store loaded: ${this.entries.length} entries`)
+        } else {
         logger.warn(`Learning store at ${this.filePath} contained unexpected format — starting fresh`)
       }
     } catch (err) {
@@ -391,8 +426,8 @@ export class MemoryLearningStore implements LearningStore {
     if (this.entries.length > MAX_LEARNING_ENTRIES) {
       const excess = this.entries.length - MAX_LEARNING_ENTRIES
       const pruned = this.entries.splice(0, excess)
-      for (const entry of pruned) {
-        this.learningIndex.subtract(entry)
+      for (const staleEntry of pruned) {
+        this.learningIndex.subtract(staleEntry)
       }
     }
   }

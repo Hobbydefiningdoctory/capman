@@ -7,10 +7,11 @@ import { logger } from './logger'
 
 export function generate(config: CapmanConfig): Manifest {
   return {
-    version: VERSION,
-    app: config.app,
-    generatedAt: new Date().toISOString(),
-    capabilities: config.capabilities.map(cap => ({ ...cap, params: [...cap.params] })),
+    schemaVersion: '1',
+    version:       VERSION,
+    app:           config.app,
+    generatedAt:   new Date().toISOString(),
+    capabilities:  config.capabilities.map(cap => ({ ...cap })),
   }
 }
 
@@ -43,6 +44,10 @@ export function loadConfig(configPath?: string): CapmanConfig {
       // Full ESM config support is planned for v0.5.
     
       try {
+        // Bust the module cache before loading — require() caches by resolved path,
+        // so a second call without this returns the stale version from the first call.
+        // This matters in watch mode and test suites that change config between calls.
+        delete require.cache[require.resolve(resolved)]
         const mod = require(resolved)
         raw = mod.default ?? mod
       } catch (err: unknown) {
@@ -106,7 +111,12 @@ export function writeManifest(manifest: Manifest, outputPath = 'manifest.json'):
       `Resolved: ${resolved}\nAllowed:  ${cwd}`
     )
   }
-  fs.writeFileSync(resolved, JSON.stringify(manifest, null, 2))
+  // Write atomically via tmp → rename — same pattern used by FileCache and
+  // FileLearningStore. A crash or SIGKILL mid-write leaves the .tmp file, not
+  // a truncated manifest.json, so the next readManifest() can still parse it.
+  const tmp = `${resolved}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
+  fs.renameSync(tmp, resolved)
   return resolved
 }
 

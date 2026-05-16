@@ -227,7 +227,7 @@ async function resolveApi(
           const effectiveRetries = (options.retryAllMethods || SAFE_METHODS.has(call.method))
             ? retries
             : 0
-        let lastErr: unknown
+          let lastErr: unknown = new Error('fetchWithRetry: exhausted all attempts without result')
         for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -245,6 +245,14 @@ async function resolveApi(
           : undefined,
         })
         clearTimeout(timer)
+        // Throw on retryable 5xx — fetch() resolves (doesn't throw) on HTTP errors,
+        // so without this check a 503 is returned immediately with no retry.
+        // 4xx errors are not retried — they are client errors that won't change.
+        if (res.status >= 500 && attempt < effectiveRetries) {
+          lastErr = new Error(`HTTP ${res.status}`)
+          logger.warn(`Server error ${res.status} (attempt ${attempt + 1}/${effectiveRetries + 1}) — retrying`)
+          continue
+        }
         return res
       } catch (err) {
         clearTimeout(timer)
@@ -263,16 +271,10 @@ async function resolveApi(
   try {
     const responses = await Promise.all(apiCalls.map(c => fetchWithRetry(c)))
 
-    const failedIdx = responses.findIndex(r => !r.ok)
-    if (failedIdx !== -1) {
-      const failed = responses[failedIdx]
-      return {
-        success: false, resolverType: 'api', apiCalls,
-        durationMs: Date.now() - startTime,
-        error: `API request failed: ${failed.status} ${failed.statusText}`,
-      }
-    }
-
+    // Enrich ALL calls with status and response data regardless of success/failure.
+    // On a partial failure (e.g. POST /reserve succeeded, POST /notify failed),
+    // callers MUST be able to see which endpoints ran so they can perform
+    // compensating actions. Returning bare apiCalls on failure hides this.
     const enrichedCalls = await Promise.all(
       responses.map(async (res, i) => {
         let data: unknown = undefined
@@ -283,6 +285,16 @@ async function resolveApi(
         return { ...apiCalls[i], status: res.status, data }
       })
     )
+
+    const failedCall = enrichedCalls.find(c => !(c as { status: number }).status || (c as { status: number }).status >= 400)
+    if (failedCall) {
+      const status = (failedCall as { status?: number }).status
+      return {
+        success: false, resolverType: 'api', apiCalls: enrichedCalls,
+        durationMs: Date.now() - startTime,
+        error: `API request failed: ${status ?? 'unknown status'}`,
+      }
+    }
 
     logger.debug(`API calls completed in ${Date.now() - startTime}ms`)
     return { success: true, resolverType: 'api', apiCalls: enrichedCalls, durationMs: Date.now() - startTime }
