@@ -5,6 +5,8 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 // ─── Parameter Definition ─────────────────────────────────────────────────────
 
+export type ParamType = 'string' | 'number' | 'boolean' | 'date' | 'email' | 'url' | 'enum' | 'object'
+
 export interface CapabilityParam {
   name:        string
   description: string
@@ -14,9 +16,27 @@ export interface CapabilityParam {
    * Optional extraction hint. Either a named type or an example template.
    * Named types: 'email' | 'date' | 'orderId' | 'url'
    * Example template: "order {paramName}" — extracts token after "order"
-   * When provided, pattern matching runs before keyword heuristics.
    */
   pattern?:    string
+  /**
+   * Semantic type of the parameter value.
+   * When set, implies a TYPE_PATTERNS match without requiring pattern to be set.
+   * 'email', 'date', 'url' map directly to TYPE_PATTERNS regex.
+   * 'enum' requires the enum field to be set with allowed values.
+   * 'number', 'boolean', 'object' affect coercion in LLM extraction.
+   */
+  type?:       ParamType
+  /**
+   * Allowed values when type === 'enum'.
+   * Extracted values not in this list are rejected and added to missingParams.
+   */
+  enum?:       string[]
+  /**
+   * Single concrete example for LLM param prompting.
+   * Helps the LLM understand what a valid value looks like.
+   * e.g. example: "ORD-12345"
+   */
+  example?:    string
 }
 
 // ─── Resolver Configs ─────────────────────────────────────────────────────────
@@ -53,16 +73,50 @@ export interface PrivacyScope {
 
 // ─── Capability Definition ────────────────────────────────────────────────────
 
-export interface Capability {
-  id: string
-  name: string
-  description: string
-  examples?: string[]
-  params: CapabilityParam[]
-  returns: string[]
-  resolver: Resolver
-  privacy: PrivacyScope
+export type LifecycleStatus = 'stable' | 'beta' | 'experimental' | 'deprecated'
+
+export interface LifecycleInfo {
+  status:        LifecycleStatus
+  /** ISO 8601 — when the capability was deprecated */
+  deprecatedAt?: string
+  /** ISO 8601 — when the capability will stop working */
+  sunsetAt?:     string
+  /** Capability id to use instead of this one */
+  successor?:    string
+  /** Human-readable note for consumers */
+  note?:         string
 }
+
+export interface CapabilityError {
+  /** Machine-readable error code e.g. "ORDER_NOT_FOUND", "INSUFFICIENT_FUNDS" */
+  code:         string
+  /** Human-readable description for developers */
+  description:  string
+  /** HTTP status code this error maps to */
+  httpStatus?:  number
+  /**
+   * Whether the agent should retry after this error.
+   * true  — transient (503, timeout) — retry is safe
+   * false — permanent (422, 404) — retrying won't help, ask user
+   */
+  retryable?:   boolean
+}
+
+export interface Capability {
+  id:          string
+  name:        string
+  description: string
+  examples?:   string[]
+  params:      CapabilityParam[]
+  returns:     string[]
+  resolver:    Resolver
+  privacy:     PrivacyScope
+  /** Lifecycle status — defaults to 'stable' when absent */
+  lifecycle?:  LifecycleInfo
+  /** Tags for grouping and filtering capabilities */
+  tags?:       string[]
+  errors?:     CapabilityError[]
+  }
 
 // ─── Manifest ─────────────────────────────────────────────────────────────────
 
@@ -78,6 +132,11 @@ export interface Manifest {
   app:          string
   generatedAt:  string
   capabilities: Capability[]
+  /**
+   * Optional registry of known tags with descriptions.
+   * Used for documentation and validation — not required for tags to work.
+   */
+  tagRegistry?:  Record<string, { description: string }>
 }
 
 // ─── Config File ──────────────────────────────────────────────────────────────
@@ -110,16 +169,21 @@ export interface ApiCallResult {
   status?: number
   /** Parsed JSON response body — only present when actually executed */
   data?: unknown
+  /** Error message — only present on network-level failure (status 0) */
+  error?: string 
 }
 
 export interface ResolveResult {
-  success: boolean
+  success:      boolean
   resolverType: ResolverType | null
-  apiCalls?: ApiCallResult[]
-  navTarget?: string
-  /** Execution time in milliseconds */
-  durationMs?: number
-  error?: string
+  error?:       string
+  /** Structured error from capability.errors[] when httpStatus matches */
+  matchedError?: CapabilityError
+  apiCalls?:    ApiCallResult[]
+  navTarget?:   string
+  status?:      number
+  data?:        unknown
+  durationMs?:  number
 }
 // ─── Validation ───────────────────────────────────────────────────────────────
 

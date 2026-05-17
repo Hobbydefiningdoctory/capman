@@ -113,6 +113,7 @@ describe('CapmanEngine', () => {
         intent: 'retrieval' as const,
         extractedParams: {},
         reasoning: 'test',
+        candidates: [{ capabilityId: manifest.capabilities[0].id, score: 100, matched: true }],
       })
 
       // First get — comes from file, promotes to memory
@@ -798,6 +799,53 @@ describe('CapmanEngine', () => {
       // Swap manifest — cache must be cleared
       await engine.loadManifest(manifest)
       expect(await cache.size()).toBe(0)
+    })
+  })
+
+  describe('lifecycle warnings', () => {
+    it('matches deprecated capability without throwing', async () => {
+      const deprecatedManifest = generate({
+        ...config,
+        capabilities: [{
+          ...config.capabilities[0],
+          lifecycle: {
+            status:       'deprecated',
+            deprecatedAt: '2026-01-01T00:00:00.000Z',
+            successor:    'new_get_articles',
+            note:         'Use new_get_articles instead',
+          },
+        }],
+      })
+      const engine = new CapmanEngine({
+        manifest: deprecatedManifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result).toBeDefined()
+      expect(result.match.capability?.id).toBe(config.capabilities[0].id)
+    })
+
+    it('matches sunset capability without throwing', async () => {
+      const sunsetManifest = generate({
+        ...config,
+        capabilities: [{
+          ...config.capabilities[0],
+          lifecycle: {
+            status:   'deprecated',
+            sunsetAt: '2020-01-01T00:00:00.000Z',
+          },
+        }],
+      })
+      const engine = new CapmanEngine({
+        manifest: sunsetManifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result).toBeDefined()
     })
   })
 

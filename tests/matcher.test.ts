@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { generate, match, matchWithLLM } from '../src/index'
 import type { CapmanConfig } from '../src/types'
 import { stem, tokenize } from '../src/matcher'
+import { filterByTags, extractParams} from '../src/matcher'
 
 // ─── Minimal test manifest ────────────────────────────────────────────────────
 
@@ -278,6 +279,109 @@ describe('match()', () => {
       expect(exampleTokens.has('track')).toBe(true)
       // Note: single-pass stemmer — 'orders' → 'order', 'order' → 'ord'
       // Use -ing forms for symmetry tests since they reduce to the root in one pass
+    })
+  })
+
+  describe('filterByTags', () => {
+    const taggedManifest = generate({
+      app: 'test-app',
+      baseUrl: 'https://api.test.com',
+      capabilities: [
+        {
+          id: 'get_orders', name: 'Get orders', description: 'Get user orders.',
+          examples: ['show orders'], params: [], returns: ['orders'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/orders' }] },
+          privacy: { level: 'public' }, tags: ['orders', 'read'],
+        },
+        {
+          id: 'cancel_order', name: 'Cancel order', description: 'Cancel an order.',
+          examples: ['cancel order'], params: [], returns: ['status'],
+          resolver: { type: 'api', endpoints: [{ method: 'DELETE', path: '/orders/{id}' }] },
+          privacy: { level: 'user_owned' }, tags: ['orders', 'write'],
+        },
+        {
+          id: 'get_articles', name: 'Get articles', description: 'Get articles.',
+          examples: ['show articles'], params: [], returns: ['articles'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/articles' }] },
+          privacy: { level: 'public' }, tags: ['content'],
+        },
+        {
+          id: 'no_tags', name: 'No tags', description: 'Capability without tags.',
+          examples: ['do thing'], params: [], returns: ['result'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/thing' }] },
+          privacy: { level: 'public' },
+        },
+      ],
+    })
+
+    it('filters to capabilities matching a single tag', () => {
+      const filtered = filterByTags(taggedManifest, ['orders'])
+      expect(filtered.capabilities.map(c => c.id)).toEqual(['get_orders', 'cancel_order'])
+    })
+
+    it('filters to capabilities matching all tags (intersection)', () => {
+      const filtered = filterByTags(taggedManifest, ['orders', 'write'])
+      expect(filtered.capabilities.map(c => c.id)).toEqual(['cancel_order'])
+    })
+
+    it('excludes capabilities without tags when filter is active', () => {
+      const filtered = filterByTags(taggedManifest, ['orders'])
+      expect(filtered.capabilities.find(c => c.id === 'no_tags')).toBeUndefined()
+    })
+
+    it('returns full manifest when no tags provided', () => {
+      const filtered = filterByTags(taggedManifest, [])
+      expect(filtered.capabilities.length).toBe(taggedManifest.capabilities.length)
+    })
+
+    it('preserves manifest metadata on filtered result', () => {
+      const filtered = filterByTags(taggedManifest, ['content'])
+      expect(filtered.app).toBe(taggedManifest.app)
+      expect(filtered.schemaVersion).toBe(taggedManifest.schemaVersion)
+      expect(filtered.capabilities.length).toBe(1)
+    })
+  })
+
+  describe('type-implied extraction', () => {
+    it('extracts email via type without pattern field', () => {
+      const cap = generate({
+        app: 'test', baseUrl: 'https://api.test.com',
+        capabilities: [{
+          id: 'send_email', name: 'Send email', description: 'Send an email.',
+          examples: ['send email'], params: [{
+            name: 'recipient', description: 'Email address', required: true,
+            source: 'user_query', type: 'email',
+          }], returns: ['status'],
+          resolver: { type: 'api', endpoints: [{ method: 'POST', path: '/email' }] },
+          privacy: { level: 'public' },
+        }],
+      }).capabilities[0]
+
+      const params = extractParams('send email to john@example.com', cap)
+      expect(params.recipient).toBe('john@example.com')
+    })
+
+    it('rejects enum value not in allowed list', () => {
+      const cap = generate({
+        app: 'test', baseUrl: 'https://api.test.com',
+        capabilities: [{
+          id: 'set_status', name: 'Set status', description: 'Set order status.',
+          examples: ['set status'], params: [{
+            name: 'status', description: 'Order status', required: true,
+            source: 'user_query', type: 'enum', enum: ['pending', 'shipped', 'delivered'],
+          }], returns: ['result'],
+          resolver: { type: 'api', endpoints: [{ method: 'POST', path: '/status' }] },
+          privacy: { level: 'public' },
+        }],
+      }).capabilities[0]
+
+      // 'cancelled' not in enum → null
+      const params = extractParams('set status to cancelled', cap)
+      expect(params.status).toBeNull()
+
+      // 'shipped' is in enum → extracted
+      const params2 = extractParams('set status to shipped', cap)
+      expect(params2.status).toBe('shipped')
     })
   })
   

@@ -126,7 +126,7 @@ export async function resolve(
     
     switch (resolver.type) {
       case 'api':
-        return await resolveApi(resolver, enrichedParams, options, sessionParamNames)
+        return await resolveApi(resolver, enrichedParams, options, sessionParamNames, capability.errors ?? [])
 
       case 'nav':
         return resolveNav(resolver, enrichedParams)
@@ -134,7 +134,7 @@ export async function resolve(
       case 'hybrid': {
         logger.debug('Hybrid resolver — running API and nav in parallel')
         const [apiResult, navResult] = await Promise.all([
-          resolveApi(resolver.api as ApiResolver, enrichedParams, options, sessionParamNames),
+          resolveApi(resolver.api as ApiResolver, enrichedParams, options, sessionParamNames, capability.errors ?? []),
           Promise.resolve(resolveNav(resolver.nav as NavResolver, enrichedParams)),
         ])
         return {
@@ -181,7 +181,8 @@ async function resolveApi(
   resolver: ApiResolver | Omit<ApiResolver, 'type'>,
   params: Record<string, unknown>,
   options: ResolveOptions,
-  sessionParamNames: Set<string> = new Set()
+  sessionParamNames: Set<string> = new Set(),
+  capabilityErrors: import('./types').CapabilityError[] = []
 ): Promise<ResolveResult> {
   const startTime = Date.now()
   const retries   = options.retries  ?? 0
@@ -268,31 +269,47 @@ async function resolveApi(
     throw lastErr
   }
 
-  try {
-    const responses = await Promise.all(apiCalls.map(c => fetchWithRetry(c)))
+  let enrichedCalls: ApiCallResult[] = apiCalls.map(c => ({ ...c }))
 
-    // Enrich ALL calls with status and response data regardless of success/failure.
-    // On a partial failure (e.g. POST /reserve succeeded, POST /notify failed),
-    // callers MUST be able to see which endpoints ran so they can perform
-    // compensating actions. Returning bare apiCalls on failure hides this.
-    const enrichedCalls = await Promise.all(
-      responses.map(async (res, i) => {
+  try {
+    const settled = await Promise.allSettled(apiCalls.map(c => fetchWithRetry(c)))
+
+    enrichedCalls = await Promise.all(
+      settled.map(async (result, i) => {
+        if (result.status === 'rejected') {
+          const reason = result.reason
+          logger.warn(`Endpoint ${apiCalls[i].method} ${apiCalls[i].url} failed: ${reason}`)
+          return {
+            ...apiCalls[i],
+            status: 0,
+            error: reason instanceof Error ? reason.message : String(reason),
+          }
+        }
+        const res = result.value
         let data: unknown = undefined
         try {
           const text = await res.text()
           data = text ? JSON.parse(text) : undefined
-        } catch { /* non-JSON response */ }
+        } catch { /* non-JSON response body */ }
         return { ...apiCalls[i], status: res.status, data }
       })
     )
 
-    const failedCall = enrichedCalls.find(c => !(c as { status: number }).status || (c as { status: number }).status >= 400)
+    const failedCall = enrichedCalls.find(
+      c => typeof c.status === 'number' && (c.status === 0 || c.status >= 400)
+    )
     if (failedCall) {
-      const status = (failedCall as { status?: number }).status
+      const matchedError = capabilityErrors.find(e => e.httpStatus === failedCall.status)
+      const statusLabel = failedCall.status === 0 ? 'network failure' : String(failedCall.status)
       return {
-        success: false, resolverType: 'api', apiCalls: enrichedCalls,
-        durationMs: Date.now() - startTime,
-        error: `API request failed: ${status ?? 'unknown status'}`,
+        success:      false,
+        resolverType: 'api',
+        apiCalls:     enrichedCalls,
+        durationMs:   Date.now() - startTime,
+        error: matchedError
+          ? `${matchedError.code}: ${matchedError.description}`
+          : `API request failed: ${statusLabel} on ${failedCall.method} ${failedCall.url}`,
+        matchedError,
       }
     }
 
@@ -301,7 +318,7 @@ async function resolveApi(
 
   } catch (err) {
     return {
-      success: false, resolverType: 'api', apiCalls,
+      success: false, resolverType: 'api', apiCalls: enrichedCalls,
       durationMs: Date.now() - startTime,
       error: err instanceof Error ? err.message : String(err),
     }

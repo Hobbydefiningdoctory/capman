@@ -1,9 +1,9 @@
-import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType, MatchCandidate } from './types'
+import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType, MatchCandidate, Capability } from './types'
 import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, type BM25Index } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -325,6 +325,11 @@ export class CapmanEngine {
         durationMs: 0,
         detail:    privacyError ?? `level: ${matchResult.capability.privacy.level}`,
       })
+
+
+      // Warn on deprecated or sunset capabilities — never silently fail
+      this.checkCapabilityLifecycle(matchResult.capability)
+      
       // Short-circuit: if privacy fails, skip disambiguation to avoid burning an LLM
       // call on a request that _resolve() will block anyway. privacyFailed propagates
       // to Step 4a so the mode guard check is clean and explicit.
@@ -427,13 +432,15 @@ export class CapmanEngine {
               }
             }
           } catch (err) {
-            // Always refund the rate-limit slot — the call failed, it should
-            // not count against the per-minute quota.
-            this.llmCallsThisMinute = Math.max(0, this.llmCallsThisMinute - 1)
-            // Only open the circuit breaker for hard failures, not JSON parse errors —
-            // a bad LLM response format is a model issue, not a connectivity issue.
             const isParseError = err instanceof SyntaxError
-            if (!isParseError) this.recordLLMFailure()
+            if (isParseError) {
+              // JSON parse failure: refund the rate-limit slot but don't open circuit breaker
+              // The llm is reachable - the response format was just bad
+              this.llmCallsThisMinute = Math.max(0, this.llmCallsThisMinute - 1)
+            } else {
+              // Hard failure (timeout, network): refund slot and increment fail counter
+              this.recordLLMFailure()
+            }
             logger.warn(`LLM param extraction failed: ${err instanceof Error ? err.message : String(err)}`)
             // fall through to missingParams below
           }
@@ -561,6 +568,40 @@ export class CapmanEngine {
         `[capman] Manifest version "${manifest.version}" could not be compared ` +
         `to engine version "${VERSION}" — version strings are not valid semver.`
       )
+    }
+  }
+
+  private checkCapabilityLifecycle(capability: Capability): void {
+    const lc = capability.lifecycle
+    if (!lc || lc.status === 'stable' || lc.status === 'beta' || lc.status === 'experimental') {
+      if (lc?.status === 'beta') {
+        logger.warn(`Capability "${capability.id}" is in beta — behavior may change`)
+      }
+      if (lc?.status === 'experimental') {
+        logger.warn(`Capability "${capability.id}" is experimental — use with caution`)
+      }
+      return
+    }
+
+    if (lc.status === 'deprecated') {
+      const sunsetPassed = lc.sunsetAt && new Date(lc.sunsetAt) < new Date()
+
+      if (sunsetPassed) {
+        // Sunset date has passed — strongest warning
+        console.warn(
+          `[capman] ⚠️  Capability "${capability.id}" passed its sunset date (${lc.sunsetAt}). ` +
+          `It may be removed in a future version.` +
+          (lc.successor ? ` Use "${lc.successor}" instead.` : '') +
+          (lc.note ? ` Note: ${lc.note}` : '')
+        )
+      } else {
+        logger.warn(
+          `Capability "${capability.id}" is deprecated.` +
+          (lc.sunsetAt ? ` Sunset: ${lc.sunsetAt}.` : '') +
+          (lc.successor ? ` Use "${lc.successor}" instead.` : '') +
+          (lc.note ? ` Note: ${lc.note}` : '')
+        )
+      }
     }
   }
 
@@ -840,7 +881,7 @@ export class CapmanEngine {
       query: string,
       steps?: TraceStep[]
     ): Promise<{ matchResult: MatchResult; resolvedVia: EngineResult['resolvedVia'] }> {
-      let matchResult: MatchResult
+      let matchResult: MatchResult | undefined
       let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
 
       // Fuzzy options — never applied in cheap mode
@@ -956,7 +997,11 @@ export class CapmanEngine {
       }
     }
 
-    return { matchResult: matchResult!, resolvedVia }
+      if (matchResult === undefined) {
+        const exhaustive: never = this.mode as never
+        throw new Error(`_runMatch: unhandled MatchMode "${exhaustive}"`)
+      }
+      return { matchResult, resolvedVia }
   }
 
   /**
@@ -1085,20 +1130,7 @@ export class CapmanEngine {
   }
 
   private calibrateBM25Ceiling(): number {
-    let max = 0
-    for (const cap of this.manifest.capabilities) {
-      if (!cap.examples?.length) continue
-      // Score ALL examples and take the highest — a capability with a generic
-      // first example but richer later ones would produce an under-calibrated
-      // ceiling if only examples[0] is used, compressing score spread for all
-      // other capabilities that normalize against that ceiling.
-      for (const example of cap.examples) {
-        const selfWords = new Set(tokenize(example))
-        const raw = _scoreCapability(selfWords, cap, this.bm25Index, this.bm25K1, this.bm25B)
-        if (raw > max) max = raw
-      }
-    }
-    return max > 0 ? max : 100
+    return _calibrateCeiling(this.manifest.capabilities, this.bm25Index, this.bm25K1, this.bm25B)
   }
 
   /**

@@ -7,9 +7,14 @@ const CapabilityParamSchema = z.object({
   description: z.string().min(1, 'param description is required'),
   required:    z.boolean(),
   source:      z.enum(['user_query', 'session']),
-  default:     z.union([z.string(), z.number(), z.boolean()]).optional(),
   pattern:     z.string().optional(),
-})
+  type:        z.enum(['string', 'number', 'boolean', 'date', 'email', 'url', 'enum', 'object']).optional(),
+  enum:        z.array(z.string()).optional(),
+  example:     z.string().optional(),
+}).refine(
+  p => !(p.type === 'enum' && (!p.enum || p.enum.length === 0)),
+  { message: 'enum values required when type is "enum"' }
+)
 
 // ─── Resolver Schemas ─────────────────────────────────────────────────────────
 
@@ -56,6 +61,21 @@ const PrivacyScopeSchema = z.object({
   note:  z.string().optional(),
 })
 
+const LifecycleInfoSchema = z.object({
+  status:       z.enum(['stable', 'beta', 'experimental', 'deprecated']),
+  deprecatedAt: z.string().datetime().optional(),
+  sunsetAt:     z.string().datetime().optional(),
+  successor:    z.string().optional(),
+  note:         z.string().optional(),
+})
+
+const CapabilityErrorSchema = z.object({
+  code:        z.string().min(1, 'error code is required'),
+  description: z.string().min(1, 'error description is required'),
+  httpStatus:  z.number().int().min(400).max(599).optional(),
+  retryable:   z.boolean().optional(),
+})
+
 // ─── Capability Schema ────────────────────────────────────────────────────────
 
 const CapabilitySchema = z.object({
@@ -70,6 +90,9 @@ const CapabilitySchema = z.object({
   returns:     z.array(z.string()),
   resolver:    ResolverSchema,
   privacy:     PrivacyScopeSchema,
+  lifecycle: LifecycleInfoSchema.optional(),
+  tags:      z.array(z.string().min(1)).optional(),
+  errors:    z.array(CapabilityErrorSchema).optional(),
 })
 
 // ─── Config Schema ────────────────────────────────────────────────────────────
@@ -101,6 +124,7 @@ export const ManifestSchema = z.object({
   app:           z.string().min(1),
   generatedAt:   z.string().datetime(),
   capabilities:  z.array(CapabilitySchema).min(1),
+  tagRegistry:   z.record(z.object({ description: z.string() })).optional(),
 })
 
 // ─── Validation helpers ───────────────────────────────────────────────────────

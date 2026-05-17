@@ -2,6 +2,7 @@ import type { Manifest, Capability, MatchResult, MatchCandidate } from './types'
 import { logger } from './logger'
 import Fuse from 'fuse.js'
 
+
 // ─── Typed error for LLM parse failures ──────────────────────────────────────
 
 export class LLMParseError extends Error {
@@ -288,6 +289,34 @@ export function extractBigrams(tokens: string[]): Set<string> {
 }
 
 /**
+ * Returns a sub-manifest containing only capabilities that match ALL provided tags.
+ * Capabilities without tags are excluded when tags filter is active.
+ * Enables token-efficient LLM prompts for large manifests:
+ *
+ * @example
+ * // Only send order-related capabilities to LLM
+ * const orderManifest = filterByTags(manifest, ['orders'])
+ * const result = await matchWithLLM(query, orderManifest, { llm })
+ *
+ * @example
+ * // Match by any of multiple tags (union) — call filterByTags per tag and merge
+ * const ordersOrPayments = [
+ *   ...filterByTags(manifest, ['orders']).capabilities,
+ *   ...filterByTags(manifest, ['payments']).capabilities,
+ * ]
+ */
+export function filterByTags(manifest: Manifest, tags: string[]): Manifest {
+  if (tags.length === 0) return manifest
+  const tagSet = new Set(tags)
+  return {
+    ...manifest,
+    capabilities: manifest.capabilities.filter(cap =>
+      cap.tags?.length && tags.every(t => cap.tags!.includes(t))
+    ),
+  }
+}
+
+/**
  * Returns a fixed bonus in normalized points (0–15), applied after BM25 normalization.
  * 5 points per matching bigram, saturates at 3 bigrams (15 points).
  * Fixed point value regardless of manifest size — ceiling-independent.
@@ -359,18 +388,35 @@ export function extractParams(query: string, cap: Capability): Record<string, st
       continue
     }
 
-    // ── Pattern extraction (highest priority) ─────────────────────────────
+    // ── Type-implied pattern extraction ───────────────────────────────────
+    // param.type implies a TYPE_PATTERNS match — no need to set pattern explicitly
+    if (param.type && !param.pattern) {
+      // Map param types that have direct regex equivalents
+      const typeToPattern: Record<string, RegExp | undefined> = {
+        email: TYPE_PATTERNS.email,
+        date:  TYPE_PATTERNS.date,
+        url:   TYPE_PATTERNS.url,
+      }
+      const impliedPattern = typeToPattern[param.type]
+      if (impliedPattern) {
+        const match = query.match(impliedPattern)
+        if (match) {
+          result[param.name] = match[0]
+          continue
+        }
+      }
+    }
+
+    // ── Explicit pattern extraction (highest priority when set) ───────────
     if (param.pattern) {
       const namedPattern = TYPE_PATTERNS[param.pattern]
       if (namedPattern) {
-        // Named type pattern — match regex directly against full query
         const match = query.match(namedPattern)
         if (match) {
           result[param.name] = match[0]
           continue
         }
       } else if (param.pattern.includes(`{${param.name}}`)) {
-        // Example template — positional extraction
         const extracted = extractFromTemplate(query, param.pattern, param.name)
         if (extracted) {
           result[param.name] = extracted
@@ -442,11 +488,19 @@ export function extractParams(query: string, cap: Capability): Record<string, st
     }
   }
 
-    result[param.name] = extracted
-  }
+    // ── Enum validation ───────────────────────────────────────────────────
+        if (extracted !== null && param.type === 'enum' && param.enum?.length) {
+          if (!param.enum.includes(extracted)) {
+            // Extracted value not in allowed list — treat as not found
+            extracted = null
+          }
+        }
 
-  return result
-}
+        result[param.name] = extracted
+      }
+
+      return result
+    }
 
 export interface MatchOptions {
   fuzzyMatch?:     boolean
@@ -455,6 +509,29 @@ export interface MatchOptions {
   bm25K1?:         number      // TF saturation (default: 1.5)
   bm25B?:          number      // length normalization (default: 0.75)
   bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
+}
+
+/**
+ * Calibrates a BM25 normalization ceiling from the manifest.
+ * Scores each capability against all of its own examples and returns the maximum.
+ * Call once at manifest load time — O(capabilities × examples).
+ */
+export function calibrateCeiling(
+  capabilities: Capability[],
+  bm25Index: BM25Index,
+  k1: number,
+  b: number
+): number {
+  let max = 0
+  for (const cap of capabilities) {
+    if (!cap.examples?.length) continue
+    for (const example of cap.examples) {
+      const selfWords = new Set(tokenize(example))
+      const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
+      if (raw > max) max = raw
+    }
+  }
+  return max > 0 ? max : 100
 }
 
 export function match(
@@ -541,16 +618,7 @@ export function match(
       const b         = options.bm25B  ?? 0.75
 
       // Calibrate ceiling — max self-score for normalization
-      const ceiling = options.bm25Ceiling ?? (() => {
-        let max = 0
-        for (const cap of manifest.capabilities) {
-          if (!cap.examples?.length) continue
-          const selfWords = new Set(tokenize(cap.examples[0]))
-          const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
-          if (raw > max) max = raw
-        }
-        return max > 0 ? max : 100
-      })()
+  const ceiling = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
 
    const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
     for (const cap of manifest.capabilities) {

@@ -41,6 +41,7 @@ export {
 export { LLMParseError } from './matcher'
 export type { LLMMatcherOptions } from './matcher'
 export { TYPE_PATTERNS } from './matcher'
+export { filterByTags } from './matcher'
 
 export { resolve } from './resolver'
 export type { ResolveOptions, AuthContext } from './resolver'
