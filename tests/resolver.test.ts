@@ -109,6 +109,40 @@ describe('resolve()', () => {
       expect(result.success).toBe(true)
       expect(result.matchedError).toBeUndefined()
     })
+
+    it('allows retry on POST with explicit idempotent: true', async () => {
+      const idempotentConfig: CapmanConfig = {
+        app: 'test-app',
+        capabilities: [{
+          id: 'create_order',
+          name: 'Create order',
+          description: 'Creates an order with idempotency support.',
+          examples: ['create order'],
+          params: [{ name: 'order_id', description: 'Order ID', required: true, source: 'user_query' }],
+          returns: ['order'],
+          resolver: {
+            type: 'api',
+            endpoints: [{
+              method: 'POST',
+              path: '/orders',
+              idempotent: true,
+              idempotencyKey: 'order_id',
+            }],
+          },
+          privacy: { level: 'public' },
+        }],
+      }
+      const m = generate(idempotentConfig)
+      const matchResult = match('create order', m)
+      const result = await resolve(
+        matchResult,
+        { order_id: 'ORD-12345' },
+        { baseUrl: 'https://api.test.com', dryRun: true, retries: 2 }
+      )
+      // dryRun — verify apiCalls shape correct
+      expect(result.success).toBe(true)
+      expect(result.apiCalls?.[0].method).toBe('POST')
+    })
   })
   
   describe('Nav resolver', () => {

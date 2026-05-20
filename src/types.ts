@@ -1,7 +1,7 @@
 // ─── Resolver Types ───────────────────────────────────────────────────────────
 
 export type ResolverType = 'api' | 'nav' | 'hybrid'
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'
 
 // ─── Parameter Definition ─────────────────────────────────────────────────────
 
@@ -41,13 +41,28 @@ export interface CapabilityParam {
 
 // ─── Resolver Configs ─────────────────────────────────────────────────────────
 
+export interface Endpoint {
+  method:            HttpMethod
+  path:              string
+  params?:           string[]
+  /**
+   * Whether this endpoint is idempotent — safe to retry on failure.
+   * Defaults: true for GET/HEAD/OPTIONS, false for POST/PUT/PATCH/DELETE.
+   * Set explicitly to override — e.g. `idempotent: true` on a POST
+   * with an idempotency key allows retries without `retryAllMethods: true`.
+   */
+  idempotent?:       boolean
+  /**
+   * Name of the param whose value is sent as the `Idempotency-Key` header.
+   * When set and the param is available, the header is injected automatically.
+   * e.g. idempotencyKey: 'order_id' → `Idempotency-Key: ORD-12345`
+   */
+  idempotencyKey?:   string
+}
+
 export interface ApiResolver {
-  type: 'api'
-  endpoints: Array<{
-    method: HttpMethod
-    path: string
-    params?: string[]
-  }>
+  type:      'api'
+  endpoints: Endpoint[]
 }
 
 export interface NavResolver {
@@ -87,6 +102,16 @@ export interface LifecycleInfo {
   note?:         string
 }
 
+export interface MatchHint {
+  /**
+   * Advisory preferred matching mode for this capability.
+   * The engine logs when it ignores the hint (e.g. engine is in cheap mode
+   * but capability prefers accurate). Never enforced — library must not
+   * restrict what consumers can do.
+   */
+  preferredMode?: MatchMode
+}
+
 export interface CapabilityError {
   /** Machine-readable error code e.g. "ORDER_NOT_FOUND", "INSUFFICIENT_FUNDS" */
   code:         string
@@ -116,7 +141,41 @@ export interface Capability {
   /** Tags for grouping and filtering capabilities */
   tags?:       string[]
   errors?:     CapabilityError[]
+  matchHint?:  MatchHint
   }
+// ─── ManifestInfo ─────────────────────────────────────────────────────────────────
+
+export interface ManifestInfo {
+  /** Human-readable title for the app */
+  title?:       string
+  /** Brief description of what the app does */
+  description?: string
+  /** App's own version — distinct from capman package version */
+  version?:     string
+  /** URL to the app's homepage or documentation */
+  homepage?:    string
+  contact?: {
+    name?:  string
+    email?: string
+    url?:   string
+  }
+  license?: {
+    /** SPDX license identifier e.g. "MIT", "Apache-2.0" */
+    name:  string
+    url?:  string
+  }
+}
+
+export interface Server {
+  url:           string
+  description?:  string
+  /**
+   * Environment this server belongs to.
+   * Engine selects server by matching EngineOptions.environment.
+   * Fallback: first server in array when no environment matches.
+   */
+  environment?:  'production' | 'staging' | 'development' | string
+}
 
 // ─── Manifest ─────────────────────────────────────────────────────────────────
 
@@ -137,14 +196,27 @@ export interface Manifest {
    * Used for documentation and validation — not required for tags to work.
    */
   tagRegistry?:  Record<string, { description: string }>
+  /** Optional metadata block for documentation and provenance */
+  info?:         ManifestInfo
+  /**
+   * Server definitions. When present, engine selects baseUrl from this list.
+   * Falls back to EngineOptions.baseUrl if servers is absent or no match found.
+   */
+  servers?:      Server[]
 }
 
 // ─── Config File ──────────────────────────────────────────────────────────────
 
 export interface CapmanConfig {
-  app: string
-  baseUrl?: string
-  capabilities: Capability[]
+  app:           string
+  baseUrl?:      string
+  capabilities:  Capability[]
+  /** Optional metadata — written to manifest.info */
+  info?:         ManifestInfo
+  /** Optional tag registry — written to manifest.tagRegistry */
+  tagRegistry?:  Record<string, { description: string }>
+    /** Server definitions — written to manifest.servers */
+  servers?:      Server[]
 }
 
 // ─── Match Result ─────────────────────────────────────────────────────────────

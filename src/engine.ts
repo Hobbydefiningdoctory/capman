@@ -130,6 +130,13 @@ export interface EngineOptions {
    * When undefined, calibrated automatically from manifest score distribution.
    */
   adaptiveMarginOverride?: number
+  /**
+   * Target environment for server selection from manifest.servers[].
+   * When manifest.servers is present and this matches a server's environment,
+   * that server's URL is used as baseUrl.
+   * Falls back to first server, then EngineOptions.baseUrl if no match.
+   */
+  environment?: string
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -174,6 +181,7 @@ export class CapmanEngine {
   private bm25B:       number
   private marginAwareLLM:    boolean
   private adaptiveMargin:    number
+  private environment?: string
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -193,6 +201,7 @@ export class CapmanEngine {
     this.mode      = options.mode ?? 'balanced'
     this.llm       = options.llm
     this.baseUrl   = options.baseUrl
+    this.environment = options.environment
     this.auth      = options.auth
     this.headers   = options.headers
     this.threshold = options.threshold ?? 50
@@ -326,9 +335,10 @@ export class CapmanEngine {
         detail:    privacyError ?? `level: ${matchResult.capability.privacy.level}`,
       })
 
-
       // Warn on deprecated or sunset capabilities — never silently fail
       this.checkCapabilityLifecycle(matchResult.capability)
+      // Log when engine mode differs from capability's preferred mode
+      this.checkMatchHint(matchResult.capability)
       
       // Short-circuit: if privacy fails, skip disambiguation to avoid burning an LLM
       // call on a request that _resolve() will block anyway. privacyFailed propagates
@@ -605,6 +615,17 @@ export class CapmanEngine {
     }
   }
 
+  private checkMatchHint(capability: Capability): void {
+    const hint = capability.matchHint?.preferredMode
+    if (!hint || hint === this.mode) return
+
+    // Advisory only — log but never enforce
+    logger.warn(
+      `Capability "${capability.id}" prefers mode "${hint}" but engine is in "${this.mode}" mode. ` +
+      `Set mode: '${hint}' in EngineOptions to honor this hint.`
+    )
+  }
+
     /**
      * Replaces the active manifest without creating a new engine instance.
      * Useful for hot-reloading manifests in long-running servers without
@@ -623,6 +644,8 @@ export class CapmanEngine {
     this.bm25Index   = buildBM25Index(manifest.capabilities)
     this.bm25Ceiling = this.calibrateBM25Ceiling()
     this.adaptiveMargin = this.calibrateAdaptiveMargin()
+    // resolveBaseUrl() reads from this.manifest.servers on each call —
+    // server selection updates automatically after loadManifest()
     await this.clearCache()
   }
 
@@ -1100,12 +1123,29 @@ export class CapmanEngine {
       }
     })
   }
+
+  /**
+   * Resolves the effective baseUrl from manifest.servers[] or EngineOptions.baseUrl.
+   * Priority: environment-matched server > first server > explicit baseUrl > undefined
+   */
+  private resolveBaseUrl(): string | undefined {
+    const servers = this.manifest.servers
+    if (!servers?.length) return this.baseUrl
+
+    if (this.environment) {
+      const match = servers.find(s => s.environment === this.environment)
+      if (match) return match.url.replace(/\/$/, '')
+    }
+
+    // Fallback to first server
+    return servers[0].url.replace(/\/$/, '')
+  }
   
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private resolveOptions(overrides: Partial<ResolveOptions> = {}): ResolveOptions {
     return {
-      baseUrl: this.baseUrl,
+      baseUrl: this.resolveBaseUrl(),
       auth:    this.auth,
       headers: this.headers,
       ...overrides,

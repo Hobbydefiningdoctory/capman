@@ -1,5 +1,5 @@
 import { logger } from './logger'
-import type { MatchResult, ResolveResult, ApiResolver, NavResolver, ApiCallResult } from './types'
+import type { MatchResult, ResolveResult, ApiResolver, NavResolver, ApiCallResult, CapabilityError, Capability } from './types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ function redactParams(params: Record<string, unknown>): Record<string, string> {
 }
 
 export function checkPrivacy(
-  capability: import('./types').Capability,
+  capability: Capability,
   auth?: AuthContext
 ): string | null {
   const level = capability.privacy.level
@@ -182,25 +182,30 @@ async function resolveApi(
   params: Record<string, unknown>,
   options: ResolveOptions,
   sessionParamNames: Set<string> = new Set(),
-  capabilityErrors: import('./types').CapabilityError[] = []
+  capabilityErrors: CapabilityError[] = []
 ): Promise<ResolveResult> {
   const startTime = Date.now()
   const retries   = options.retries  ?? 0
   const timeoutMs = options.timeoutMs ?? 5000
 
+  // Map url → endpoint metadata for idempotency and Idempotency-Key injection
+  const endpointMeta = new Map<string, { idempotent?: boolean; idempotencyKey?: string }>()
+
   const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => {
-    // Build per-endpoint params — only inject session params if this
-    // specific endpoint has the placeholder. Prevents userId leaking
-    // as ?user_id=xyz on endpoints that don't use it in their path.
     const endpointParams = { ...params }
     for (const name of sessionParamNames) {
       if (!endpoint.path.includes(`{${name}}`)) {
-        delete endpointParams[name]  // strip session param — not in this endpoint's path
+        delete endpointParams[name]
       }
     }
+    const url = buildUrl(options.baseUrl ?? '', endpoint.path, endpointParams, sessionParamNames)
+    endpointMeta.set(url, {
+      idempotent:     endpoint.idempotent,
+      idempotencyKey: endpoint.idempotencyKey,
+    })
     return {
       method: endpoint.method,
-      url: buildUrl(options.baseUrl ?? '', endpoint.path, endpointParams, sessionParamNames),
+      url,
       params: Object.fromEntries(
         Object.entries(endpointParams).filter(([, v]) => v !== null && v !== undefined)
       ),
@@ -224,20 +229,32 @@ async function resolveApi(
       // Only retry safe/idempotent methods — retrying POST/PUT/PATCH/DELETE
       // can cause duplicate side effects (e.g. duplicate orders, double charges).
 
-        async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
-          const effectiveRetries = (options.retryAllMethods || SAFE_METHODS.has(call.method))
-            ? retries
-            : 0
+          async function fetchWithRetry(call: ApiCallResult): Promise<Response> {
+            const meta = endpointMeta.get(call.url)
+            // Explicit idempotent flag overrides method-based default
+            const isIdempotent = meta?.idempotent !== undefined
+              ? meta.idempotent
+              : SAFE_METHODS.has(call.method)
+            const effectiveRetries = (options.retryAllMethods || isIdempotent) ? retries : 0
           let lastErr: unknown = new Error('fetchWithRetry: exhausted all attempts without result')
         for (let attempt = 0; attempt <= effectiveRetries; attempt++) {
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), timeoutMs)
       try {
-        const res = await fetchFn(call.url, {
-          method: call.method,
-          headers: options.headers ?? {},
-          signal: controller.signal,
-          body: ['POST', 'PUT', 'PATCH'].includes(call.method)
+            // Inject Idempotency-Key header when configured
+            const idempotencyHeaders: Record<string, string> = {}
+            if (meta?.idempotencyKey) {
+              const keyValue = call.params[meta.idempotencyKey]
+              if (keyValue !== null && keyValue !== undefined) {
+                idempotencyHeaders['Idempotency-Key'] = String(keyValue)
+              }
+            }
+
+            const res = await fetchFn(call.url, {
+              method: call.method,
+              headers: { ...options.headers ?? {}, ...idempotencyHeaders },
+              signal: controller.signal,
+              body: ['POST', 'PUT', 'PATCH'].includes(call.method)
           ? JSON.stringify(
               Object.fromEntries(
                 Object.entries(call.params).filter(([, v]) => v !== null && v !== undefined)

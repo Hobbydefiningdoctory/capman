@@ -849,4 +849,61 @@ describe('CapmanEngine', () => {
     })
   })
 
+  describe('server selection', () => {
+    const multiServerManifest = generate({
+      ...config,
+      servers: [
+        { url: 'https://api.prod.com', environment: 'production' },
+        { url: 'https://api.staging.com', environment: 'staging' },
+        { url: 'https://api.dev.com', environment: 'development' },
+      ],
+    })
+
+    it('selects server by environment', async () => {
+      const engine = new CapmanEngine({
+        manifest: multiServerManifest,
+        cache: false, learning: false, mode: 'cheap',
+        environment: 'staging',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.resolution.apiCalls?.[0].url).toContain('api.staging.com')
+    })
+
+    it('falls back to first server when no environment match', async () => {
+      const engine = new CapmanEngine({
+        manifest: multiServerManifest,
+        cache: false, learning: false, mode: 'cheap',
+        environment: 'unknown-env',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.resolution.apiCalls?.[0].url).toContain('api.prod.com')
+    })
+
+    it('uses baseUrl when servers absent', async () => {
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false, learning: false, mode: 'cheap',
+        baseUrl: 'https://api.custom.com',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result.resolution.apiCalls?.[0].url).toContain('api.custom.com')
+    })
+
+    it('strips trailing slash from server url', async () => {
+      const trailingSlashManifest = generate({
+        ...config,
+        servers: [{ url: 'https://api.prod.com/', environment: 'production' }],
+      })
+      const engine = new CapmanEngine({
+        manifest: trailingSlashManifest,
+        cache: false, learning: false, mode: 'cheap',
+        environment: 'production',
+      })
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      // Should not have double slash between host and path
+      const url = result.resolution.apiCalls?.[0].url ?? ''
+      const pathPart = url.replace(/^https?:\/\//, '')
+      expect(pathPart).not.toContain('//')
+    })
+  })
 })

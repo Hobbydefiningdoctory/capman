@@ -18,13 +18,17 @@ const CapabilityParamSchema = z.object({
 
 // ─── Resolver Schemas ─────────────────────────────────────────────────────────
 
+const EndpointSchema = z.object({
+  method:          z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
+  path:            z.string().min(1, 'endpoint path is required'),
+  params:          z.array(z.string()).optional(),
+  idempotent:      z.boolean().optional(),
+  idempotencyKey:  z.string().optional(),
+})
+
 const ApiResolverSchema = z.object({
-  type: z.literal('api'),
-  endpoints: z.array(z.object({
-    method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-    path:   z.string().min(1, 'endpoint path is required'),
-    params: z.array(z.string()).optional(),
-  })).min(1, 'at least one endpoint is required'),
+  type:      z.literal('api'),
+  endpoints: z.array(EndpointSchema).min(1, 'at least one endpoint is required'),
 })
 
 const NavResolverSchema = z.object({
@@ -36,11 +40,7 @@ const NavResolverSchema = z.object({
 const HybridResolverSchema = z.object({
   type: z.literal('hybrid'),
   api: z.object({
-    endpoints: z.array(z.object({
-      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      path:   z.string().min(1),
-      params: z.array(z.string()).optional(),
-    })).min(1),
+    endpoints: z.array(EndpointSchema).min(1),
   }),
   nav: z.object({
     destination: z.string().min(1),
@@ -69,6 +69,10 @@ const LifecycleInfoSchema = z.object({
   note:         z.string().optional(),
 })
 
+const MatchHintSchema = z.object({
+  preferredMode: z.enum(['cheap', 'balanced', 'accurate']).optional(),
+})
+
 const CapabilityErrorSchema = z.object({
   code:        z.string().min(1, 'error code is required'),
   description: z.string().min(1, 'error description is required'),
@@ -93,6 +97,31 @@ const CapabilitySchema = z.object({
   lifecycle: LifecycleInfoSchema.optional(),
   tags:      z.array(z.string().min(1)).optional(),
   errors:    z.array(CapabilityErrorSchema).optional(),
+  matchHint: MatchHintSchema.optional(),
+})
+
+const ServerSchema = z.object({
+  url:          z.string().url('server url must be a valid URL'),
+  description:  z.string().optional(),
+  environment:  z.string().optional(),
+})
+
+// ─── ManifestInfo Schema ──────────────────────────────────────────────────────
+
+const ManifestInfoSchema = z.object({
+  title:       z.string().optional(),
+  description: z.string().optional(),
+  version:     z.string().optional(),
+  homepage:    z.string().url().optional(),
+  contact: z.object({
+    name:  z.string().optional(),
+    email: z.string().email().optional(),
+    url:   z.string().url().optional(),
+  }).optional(),
+  license: z.object({
+    name: z.string().min(1, 'license name is required'),
+    url:  z.string().url().optional(),
+  }).optional(),
 })
 
 // ─── Config Schema ────────────────────────────────────────────────────────────
@@ -100,6 +129,9 @@ const CapabilitySchema = z.object({
 export const CapmanConfigSchema = z.object({
   app:          z.string().min(1, 'app name is required'),
   baseUrl:      z.string().url().optional(),
+  info:         ManifestInfoSchema.optional(),
+  servers:      z.array(ServerSchema).optional(),
+  tagRegistry:  z.record(z.object({ description: z.string() })).optional(),
   capabilities: z.array(CapabilitySchema)
     .min(1, 'at least one capability is required')
     .refine(
@@ -125,6 +157,8 @@ export const ManifestSchema = z.object({
   generatedAt:   z.string().datetime(),
   capabilities:  z.array(CapabilitySchema).min(1),
   tagRegistry:   z.record(z.object({ description: z.string() })).optional(),
+  servers:      z.array(ServerSchema).optional(),
+  info:          ManifestInfoSchema.optional(),
 })
 
 // ─── Validation helpers ───────────────────────────────────────────────────────

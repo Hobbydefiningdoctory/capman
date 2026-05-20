@@ -12,6 +12,9 @@ export function generate(config: CapmanConfig): Manifest {
     app:           config.app,
     generatedAt:   new Date().toISOString(),
     capabilities:  config.capabilities.map(cap => ({ ...cap })),
+    ...(config.info ? { info: config.info } : {}),
+    ...(config.tagRegistry ? { tagRegistry: config.tagRegistry } : {}),
+    ...(config.servers     ? { servers:     config.servers     } : {}),
   }
 }
 
@@ -168,13 +171,22 @@ export function validate(manifest: Manifest): ValidationResult {
   return { valid: errors.length === 0, errors, warnings }
 }
 export function generateStarterConfig(): string {
-  return `// capman.config.js 
-// Define what your app can do for AI agents.
-// Replace the examples below with your own app's capabilities.
+  return `// capman.config.js
+// Auto-generated starter config — edit before use
 
 module.exports = {
-  app: 'your-app-name',
+  app: 'my-app',
   baseUrl: 'https://api.your-app.com',
+
+  // Optional metadata block — used for documentation and provenance
+  info: {
+    title:       'My App',
+    description: 'Brief description of what this app does',
+    version:     '1.0.0',
+    homepage:    'https://your-app.com',
+    contact:     { name: 'Your Name', email: 'you@your-app.com' },
+    license:     { name: 'MIT' },
+  },
 
   capabilities: [
     {
