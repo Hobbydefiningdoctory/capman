@@ -289,6 +289,21 @@ export function extractBigrams(tokens: string[]): Set<string> {
 }
 
 /**
+ * Reciprocal Rank Fusion — fuses multiple ranked lists into a single score map.
+ * k=60 is the standard literature default.
+ */
+function rrf(rankings: Array<Array<{ id: string; score: number }>>, k = 60): Map<string, number> {
+  const scores = new Map<string, number>()
+  for (const ranking of rankings) {
+    const sorted = [...ranking].sort((a, b) => b.score - a.score)
+    sorted.forEach((item, rank) => {
+      scores.set(item.id, (scores.get(item.id) ?? 0) + 1 / (k + rank + 1))
+    })
+  }
+  return scores
+}
+
+/**
  * Returns a sub-manifest containing only capabilities that match ALL provided tags.
  * Capabilities without tags are excluded when tags filter is active.
  * Enables token-efficient LLM prompts for large manifests:
@@ -620,16 +635,38 @@ export function match(
       // Calibrate ceiling — max self-score for normalization
   const ceiling = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
 
-   const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
-    for (const cap of manifest.capabilities) {
+  // Build per-source ranked lists for RRF fusion
+  const keywordRanking:  Array<{ id: string; score: number }> = []
+  const fuzzyRanking:    Array<{ id: string; score: number }> = []
+  const keywordScoreMap = new Map<string, number>()
+
+  for (const cap of manifest.capabilities) {
     const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
     const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
     const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
     const keywordScore = Math.min(100, bm25Score + bonusPoints)
     const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
+    if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
+    keywordScoreMap.set(cap.id, keywordScore)
+    if (fuzzyScore > 0) fuzzyRanking.push({ id: cap.id, score: fuzzyScore })
+  }
+
+  // RRF fusion. Anchor to theoretical max — a rank-1 entry in all lists scores
+  // rankings.length/(k+1). Using observed max instead inflates zero-overlap queries
+  // (all capabilities rank equally) to 100%, breaking out-of-scope rejection.
+  const rrfK = 60
+  const rankings = fuzzyRanking.length > 0 ? [keywordRanking, fuzzyRanking] : [keywordRanking]
+  const rrfScores = rrf(rankings, rrfK)
+  const theoreticalMax = rankings.length / (rrfK + 1)
+
+  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
+  for (const cap of manifest.capabilities) {
+    const rrfScore     = rrfScores.get(cap.id) ?? 0
+    const score        = Math.min(100, Math.round((rrfScore / theoreticalMax) * 100))
+    const keywordScore = keywordScoreMap.get(cap.id) ?? 0
+    const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
     const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
-    const score = Math.min(100, Math.round(Math.max(keywordScore, fuzzyScore)))
-    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%)`)
+    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%, rrf: ${rrfScore.toFixed(4)})`)
     allScores.push({ cap, score, via })
     if (score > bestScore) {
       bestScore = score

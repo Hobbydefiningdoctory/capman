@@ -22,6 +22,14 @@ export type {
   HttpMethod,
   ExplainResult,
   ExplainCandidate,
+  ManifestInfo,
+  Server,
+  LifecycleInfo,
+  LifecycleStatus,
+  CapabilityError,
+  Endpoint,
+  ParamType,
+  MatchHint,
 } from './types'
 
 export {

@@ -5,6 +5,16 @@ import { logger } from './logger'
 const MAX_LEARNING_ENTRIES = 10_000
 import { STOPWORDS, tokenize } from './matcher'
 
+/**
+ * Exponential decay — older entries contribute less signal.
+ * At exactly halfLifeDays old, a weight of 1.0 decays to 0.5.
+ * At 2× halfLifeDays, it decays to 0.25. And so on.
+ */
+function decayedWeight(weight: number, lastUpdated: number, halfLifeDays: number): number {
+  const ageDays = (Date.now() - lastUpdated) / (1000 * 60 * 60 * 24)
+  return weight * Math.pow(0.5, ageDays / halfLifeDays)
+}
+
 // Module-level registry — tracks all active FileLearningStore instances
 // for process exit flushing. Handlers registered once to avoid accumulation.
 const activeStores = new Set<FileLearningStore>()
@@ -52,13 +62,20 @@ export interface LearningEntry {
   extractedParams: Record<string, string | null>
   resolvedVia: 'keyword' | 'llm' | 'cache'
   timestamp: string
-  /**
+/**
    * Confidence-derived weight stored at record time (confidence / 100, floor 0.1).
    * Used by subtract() to reverse the exact contribution made by update(),
    * preventing index drift when high-confidence entries are pruned.
    * Optional for backwards-compatibility with persisted entries written before v0.5.5.
    */
   weight?: number
+  /**
+   * Unix timestamp (ms) when this entry was last updated.
+   * Used for time-decay — older entries contribute less learning signal.
+   * Optional for backwards-compatibility with persisted entries written before v0.7.0.
+   * Migration: FileLearningStore falls back to file mtime for entries missing this field.
+   */
+  lastUpdated?: number
 }
 
 // ─── Keyword Stats ────────────────────────────────────────────────────────────
@@ -116,13 +133,20 @@ function computeTopCapabilities(
 // Both FileLearningStore and MemoryLearningStore compose this instead of
 // duplicating the same ~80 lines of index management logic.
 
-class LearningIndex {
-  index:        Record<string, Record<string, number>> = {}
-  statsCounter: Omit<KeywordStats, 'index'> = {
-    totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0,
-  }
+  class LearningIndex {
+    index:             Record<string, Record<string, number>> = {}
+    /** Tracks when each (word, capabilityId) cell was last reinforced — used for decay */
+    lastUpdatedIndex:  Record<string, Record<string, number>> = {}
+    statsCounter: Omit<KeywordStats, 'index'> = {
+      totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0,
+    }
+    private halfLifeDays: number
 
-  update(entry: LearningEntry): void {
+    constructor(halfLifeDays = 30) {
+      this.halfLifeDays = halfLifeDays
+    }
+
+    update(entry: LearningEntry): void {
     this.statsCounter.totalQueries++
     if (entry.resolvedVia === 'llm')   this.statsCounter.llmQueries++
     if (entry.resolvedVia === 'cache') this.statsCounter.cacheHits++
@@ -133,16 +157,20 @@ class LearningIndex {
       // more signal than a 51% borderline match. Floor of 0.1 ensures
       // borderline matches still contribute, just proportionally less.
       const weight = Math.max(0.1, entry.confidence / 100)
-      // Store weight on the entry so subtract() can reverse the exact amount.
-      // Without this, subtract() would have to use a hardcoded estimate (0.5)
-      // that causes index drift after pruning high-confidence entries.
-      entry.weight = weight
+      const now    = Date.now()
+      // Store weight and timestamp on the entry so subtract() can reverse the
+      // exact amount and migration has an accurate record time.
+      entry.weight      = weight
+      entry.lastUpdated = now
 
       const words = tokenize(entry.query)
       for (const word of words) {
         this.index[word] ??= {}
         this.index[word][entry.capabilityId] =
           (this.index[word][entry.capabilityId] ?? 0) + weight
+        // Track when this (word, cap) cell was last reinforced for decay
+        this.lastUpdatedIndex[word] ??= {}
+        this.lastUpdatedIndex[word][entry.capabilityId] = now
       }
     }
   }
@@ -164,14 +192,16 @@ class LearningIndex {
       // Use the weight stored at record time for exact symmetric subtraction.
       // Fallback recalculates from confidence for entries persisted before the
       // weight field was added (backwards-compatible with older learning.json files).
-         const weight = entry.weight ?? Math.max(0.1, entry.confidence / 100)
-         this.index[word][entry.capabilityId] =
-         (this.index[word][entry.capabilityId] ?? weight) - weight
+    const weight = entry.weight ?? Math.max(0.1, entry.confidence / 100)
+       this.index[word][entry.capabilityId] =
+       (this.index[word][entry.capabilityId] ?? weight) - weight
       if (this.index[word][entry.capabilityId] <= 0) {
         delete this.index[word][entry.capabilityId]
+        delete this.lastUpdatedIndex[word]?.[entry.capabilityId]
       }
       if (Object.keys(this.index[word]).length === 0) {
         delete this.index[word]
+        delete this.lastUpdatedIndex[word]
       }
     }
   }
@@ -185,12 +215,27 @@ class LearningIndex {
   }
 
   reset(): void {
-    this.index        = {}
-    this.statsCounter = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
+    this.index            = {}
+    this.lastUpdatedIndex = {}
+    this.statsCounter     = { totalQueries: 0, llmQueries: 0, cacheHits: 0, outOfScope: 0 }
   }
 
   getStats(): KeywordStats {
-    return { ...this.statsCounter, index: structuredClone(this.index) }
+    // Apply time-decay lazily on read. The index stores accumulated weights;
+    // each (word, capId) cell is decayed by how long ago it was last reinforced.
+    // This means recently-used capabilities retain full signal while stale ones fade.
+    const decayed: Record<string, Record<string, number>> = {}
+    for (const [word, capMap] of Object.entries(this.index)) {
+      for (const [capId, weight] of Object.entries(capMap)) {
+        const lastUpdated = this.lastUpdatedIndex[word]?.[capId] ?? Date.now()
+        const dw = decayedWeight(weight, lastUpdated, this.halfLifeDays)
+        if (dw > 0.001) {  // drop negligible signal — avoids ghost entries
+          decayed[word] ??= {}
+          decayed[word][capId] = dw
+        }
+      }
+    }
+    return { ...this.statsCounter, index: decayed }
   }
 
   getIndex(): Record<string, Record<string, number>> {
@@ -205,12 +250,13 @@ export class FileLearningStore implements LearningStore {
   private entries:    LearningEntry[] = []
   private loadPromise: Promise<void> | null = null
   private saveQueue:  Promise<void>   = Promise.resolve()
-  private learningIndex = new LearningIndex()
+  private learningIndex: LearningIndex
   private dirty:      boolean         = false
   private saveTimer:  ReturnType<typeof setTimeout> | null = null
 
 
-  constructor(filePath = '.capman/learning.json') {
+  constructor(filePath = '.capman/learning.json', halfLifeDays = 30) {
+  this.learningIndex = new LearningIndex(halfLifeDays)
     const cwd      = process.cwd()
     const resolved = path.resolve(cwd, filePath)
     const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
@@ -281,23 +327,38 @@ export class FileLearningStore implements LearningStore {
   }
 
   private async _doLoad(): Promise<void> {
+  try {
+    // Fetch mtime once — used as lastUpdated fallback for pre-v0.7.0 entries.
+    // Conservative: treats all old entries as "last updated when file was written"
+    // rather than "infinitely old", preventing a cliff-edge decay on first upgrade.
+    let fileMtimeMs = Date.now()
     try {
-      const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
-      const parsed = JSON.parse(raw)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
-          // Validate each entry — corrupted entries (null capability, wrong types) must
-          // not propagate into the engine where they cause runtime errors deep in matching.
-          const validEntries: LearningEntry[] = []
-          let skipped = 0
-          for (const entry of parsed.entries) {
-            if (
-              entry !== null && typeof entry === 'object' &&
-              typeof entry.query === 'string' &&
-              (entry.capabilityId === null || typeof entry.capabilityId === 'string') &&
-              typeof entry.confidence === 'number' &&
-              typeof entry.resolvedVia === 'string'
-            ) {
-              validEntries.push(entry as LearningEntry)
+      const stat = await fs.promises.stat(this.filePath)
+      fileMtimeMs = stat.mtimeMs
+    } catch {
+      // File doesn't exist yet or stat failed — Date.now() fallback is safe
+    }
+
+    const raw    = await fs.promises.readFile(this.filePath, 'utf-8')
+    const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Array.isArray(parsed.entries)) {
+        // Validate each entry — corrupted entries (null capability, wrong types) must
+        // not propagate into the engine where they cause runtime errors deep in matching.
+        const validEntries: LearningEntry[] = []
+        let skipped = 0
+        for (const entry of parsed.entries) {
+          if (
+            entry !== null && typeof entry === 'object' &&
+            typeof entry.query === 'string' &&
+            (entry.capabilityId === null || typeof entry.capabilityId === 'string') &&
+            typeof entry.confidence === 'number' &&
+            typeof entry.resolvedVia === 'string'
+          ) {
+            // Migration guard: backfill lastUpdated for pre-v0.7.0 entries
+            validEntries.push({
+              ...entry,
+              lastUpdated: entry.lastUpdated ?? fileMtimeMs,
+            } as LearningEntry)
             } else {
               skipped++
             }
@@ -414,7 +475,11 @@ export class FileLearningStore implements LearningStore {
 
 export class MemoryLearningStore implements LearningStore {
   private entries:      LearningEntry[] = []
-  private learningIndex = new LearningIndex()
+  private learningIndex: LearningIndex
+
+  constructor(halfLifeDays = 30) {
+    this.learningIndex = new LearningIndex(halfLifeDays)
+   }
 
   async record(entry: LearningEntry): Promise<void> {
     const sanitized: LearningEntry = {

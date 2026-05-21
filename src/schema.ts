@@ -143,7 +143,7 @@ export const CapmanConfigSchema = z.object({
     const needsBaseUrl = cfg.capabilities.some(
       c => c.resolver.type === 'api' || c.resolver.type === 'hybrid'
     )
-    return !needsBaseUrl || !!cfg.baseUrl
+    return !needsBaseUrl || !!cfg.baseUrl || (cfg.servers?.length ?? 0) > 0
   },
   { message: 'baseUrl is required when any capability uses an api or hybrid resolver' }
 )

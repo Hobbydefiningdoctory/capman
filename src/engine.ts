@@ -131,12 +131,20 @@ export interface EngineOptions {
    */
   adaptiveMarginOverride?: number
   /**
-   * Target environment for server selection from manifest.servers[].
-   * When manifest.servers is present and this matches a server's environment,
-   * that server's URL is used as baseUrl.
-   * Falls back to first server, then EngineOptions.baseUrl if no match.
-   */
+  * Target environment for server selection from manifest.servers[].
+  * When manifest.servers is present and this matches a server's environment,
+  * that server's URL is used as baseUrl.
+  * Falls back to first server, then EngineOptions.baseUrl if no match.
+  */
   environment?: string
+  /**
+  * Half-life for time-decayed learning in days.
+  * A learning signal that is halfLifeDays old contributes half its original weight.
+  * Only applies when using the engine's default MemoryLearningStore.
+  * For FileLearningStore, pass halfLifeDays directly to its constructor.
+  * @default 30
+  */
+  halfLifeDays?: number 
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -229,7 +237,7 @@ export class CapmanEngine {
     // Use FileLearningStore explicitly for persistence across restarts
     this.learning = options.learning === false
       ? null
-      : (options.learning ?? new MemoryLearningStore())
+      : (options.learning ?? new MemoryLearningStore(options.halfLifeDays ?? 30))
 
     logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
     // ── Manifest version compatibility check ─────────────────────────────────
@@ -1105,7 +1113,15 @@ export class CapmanEngine {
         const hits = wordIndex[candidate.capabilityId] ?? 0
         if (hits > 0) {
           // Logarithmic boost — diminishing returns after first few hits
-          boost += Math.min(5, Math.log2(hits + 1) * 2)
+          const rawBoost = Math.min(5, Math.log2(hits + 1) * 2)
+          // IDF weighting — common words ("get", "show", "user") appear in many
+          // capabilities and accumulate learning hits that carry little signal.
+          // Reuses BM25 df/N so no separate computation is needed.
+          const df  = this.bm25Index.df[word] ?? 0
+          const idf = df > 0
+            ? Math.log((this.bm25Index.N - df + 0.5) / (df + 0.5) + 1)
+            : 0
+          boost += rawBoost * Math.min(1, idf)
         }
       }
 
