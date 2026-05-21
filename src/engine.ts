@@ -3,6 +3,7 @@ import type { LLMMatcherOptions } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
+import type { EmbeddingProvider } from './types'
 import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
@@ -149,7 +150,7 @@ halfLifeDays?: number
    * Optional embedding provider for semantic similarity as a third RRF signal.
    * Zero mandatory dependency — omit to use BM25 + Fuse only.
    */
-  embedding?: import('./types').EmbeddingProvider
+  embedding?: EmbeddingProvider
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -195,7 +196,7 @@ export class CapmanEngine {
   private marginAwareLLM:    boolean
   private adaptiveMargin:    number
   private environment?:     string
-  private embedding?:       import('./types').EmbeddingProvider
+  private embedding?:       EmbeddingProvider
   private capEmbeddings?:   number[][]   // pre-encoded capability texts, parallel to manifest.capabilities
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
@@ -643,9 +644,13 @@ export class CapmanEngine {
   }
 
   /** Cosine similarity between two equal-length vectors */
-  private cosineSim(a: number[], b: number[]): number {
-    let dot = 0, normA = 0, normB = 0
-    for (let i = 0; i < a.length; i++) {
+   private cosineSim(a: number[], b: number[]): number {
+      if (a.length !== b.length || a.length === 0) {
+      logger.warn(`cosineSim: dimension mismatch (${a.length} vs ${b.length}) — returning 0`)
+      return 0
+      }
+        let dot = 0, normA = 0, normB = 0
+        for (let i = 0; i < a.length; i++) {
       dot   += a[i] * b[i]
       normA += a[i] * a[i]
       normB += b[i] * b[i]
@@ -704,7 +709,18 @@ export class CapmanEngine {
     // resolveBaseUrl() reads from this.manifest.servers on each call —
     // server selection updates automatically after loadManifest()
     await this.clearCache()
-  }
+      // Re-encode capabilities after manifest swap — stale embeddings misalign with new capabilities
+      if (this.embedding) {
+        const texts = manifest.capabilities.map(c => `${c.name}: ${c.description}`)
+        this.embedding.encode(texts).then(vecs => {
+          this.capEmbeddings = vecs
+          logger.info('Capability embeddings re-encoded after manifest reload')
+        }).catch(err => {
+          this.capEmbeddings = undefined
+          logger.warn(`EmbeddingProvider re-encode failed after loadManifest: ${err instanceof Error ? err.message : String(err)}`)
+        })
+      }
+    }
 
   /**
    * Explain what would happen for a query — without executing it.
@@ -1000,22 +1016,28 @@ export class CapmanEngine {
               const kwResultAccurate = _match(query, this.manifest, fuzzyOpts)
               const top3Accurate = kwResultAccurate.candidates
                 .sort((a, b) => b.score - a.score)
+                .filter(c => c.score > 0)
                 .slice(0, 3)
                 .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
                 .filter(Boolean)
-              matchResult = await _matchWithLLM(query, top3Accurate, { llm: this.llm, app: this.manifest.app })
-              this.recordLLMSuccess()
-              resolvedVia = 'llm'
-              // Merge keyword scores into LLM candidates so boost has real signal for alternatives
-              const kwResult = kwResultAccurate
-              matchResult = {
-                ...matchResult,
-                candidates: matchResult.candidates.map(c => ({
-                  ...c,
-                  score: c.matched
-                    ? c.score  // keep LLM confidence for winner
-                    : (kwResult.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
-                })),
+              // Skip LLM if no candidates scored above zero — no meaningful top-3 to discriminate
+              if (top3Accurate.length === 0) {
+                matchResult = kwResultAccurate
+              } else {
+                const llmResult = await _matchWithLLM(query, top3Accurate, { llm: this.llm, app: this.manifest.app })
+                this.recordLLMSuccess()
+                resolvedVia = 'llm'
+                // If LLM says OOS but keyword had a match, the correct capability may have
+                // been rank 4+. Fall back to keyword result rather than returning OOS.
+                matchResult = llmResult.capability === null ? kwResultAccurate : {
+                  ...llmResult,
+                  candidates: llmResult.candidates.map(c => ({
+                    ...c,
+                    score: c.matched
+                      ? c.score
+                      : (kwResultAccurate.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
+                  })),
+                }
               }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {
@@ -1060,21 +1082,28 @@ export class CapmanEngine {
             try {
               const top3Balanced = keywordResult.candidates
                 .sort((a, b) => b.score - a.score)
+                .filter(c => c.score > 0)
                 .slice(0, 3)
                 .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
                 .filter(Boolean)
-              matchResult = await _matchWithLLM(query, top3Balanced, { llm: this.llm, app: this.manifest.app })
-              this.recordLLMSuccess()
-              resolvedVia = 'llm'
-              // keywordResult already computed above in balanced mode — merge scores
-              matchResult = {
-                ...matchResult,
-                candidates: matchResult.candidates.map(c => ({
-                  ...c,
-                  score: c.matched
-                    ? c.score
-                    : (keywordResult.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
-                })),
+              // Balanced mode only escalates when keyword confidence is low but > 0 —
+              // top3 should always be non-empty here, but guard anyway
+              if (top3Balanced.length === 0) {
+                matchResult = keywordResult
+              } else {
+                const llmResult = await _matchWithLLM(query, top3Balanced, { llm: this.llm, app: this.manifest.app })
+                this.recordLLMSuccess()
+                resolvedVia = 'llm'
+                // If LLM returns OOS but keyword had a scored candidate, fall back to keyword
+                matchResult = llmResult.capability === null ? keywordResult : {
+                  ...llmResult,
+                  candidates: llmResult.candidates.map(c => ({
+                    ...c,
+                    score: c.matched
+                      ? c.score
+                      : (keywordResult.candidates.find(kc => kc.capabilityId === c.capabilityId)?.score ?? 0),
+                  })),
+                }
               }
               steps?.push({ type: 'llm_match', status: 'pass', durationMs: Date.now() - t2, detail: `confidence: ${matchResult.confidence}%` })
             } catch (err) {

@@ -30,6 +30,7 @@ export type {
   Endpoint,
   ParamType,
   MatchHint,
+  EmbeddingProvider,
 } from './types'
 
 export {

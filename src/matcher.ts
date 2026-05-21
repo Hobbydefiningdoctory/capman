@@ -637,38 +637,59 @@ export function match(
       // Calibrate ceiling — max self-score for normalization
   const ceiling = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
 
-  // Build per-source ranked lists for RRF fusion
-  const keywordRanking:  Array<{ id: string; score: number }> = []
-  const fuzzyRanking:    Array<{ id: string; score: number }> = []
-  const keywordScoreMap = new Map<string, number>()
+    // Build per-source ranked lists for RRF fusion
+    const keywordRanking:   Array<{ id: string; score: number }> = []
+    const fuzzyRanking:     Array<{ id: string; score: number }> = []
+    const embeddingRanking: Array<{ id: string; score: number }> = []
+    const keywordScoreMap = new Map<string, number>()
 
-  for (const cap of manifest.capabilities) {
-    const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
-    const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
-    const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
-    const keywordScore = Math.min(100, bm25Score + bonusPoints)
-    const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
-    if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
-    keywordScoreMap.set(cap.id, keywordScore)
-    if (fuzzyScore > 0) fuzzyRanking.push({ id: cap.id, score: fuzzyScore })
-  }
+    for (const cap of manifest.capabilities) {
+      const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+      const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
+      const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
+      const keywordScore = Math.min(100, bm25Score + bonusPoints)
+      const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
+      const embScore     = options.embeddingScores?.get(cap.id) ?? 0
+      if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
+      keywordScoreMap.set(cap.id, keywordScore)
+      if (fuzzyScore > 0) fuzzyRanking.push({ id: cap.id, score: fuzzyScore })
+      if (embScore   > 0) embeddingRanking.push({ id: cap.id, score: embScore })
+    }
 
-  // RRF fusion. Anchor to theoretical max — a rank-1 entry in all lists scores
-  // rankings.length/(k+1). Using observed max instead inflates zero-overlap queries
-  // (all capabilities rank equally) to 100%, breaking out-of-scope rejection.
-  const rrfK = 60
-  const rankings = fuzzyRanking.length > 0 ? [keywordRanking, fuzzyRanking] : [keywordRanking]
-  const rrfScores = rrf(rankings, rrfK)
-  const theoreticalMax = rankings.length / (rrfK + 1)
+    // RRF fusion. Anchor to theoretical max — a rank-1 entry in all lists scores
+    // rankings.length/(k+1). Using observed max instead inflates zero-overlap queries
+    // (all capabilities rank equally) to 100%, breaking out-of-scope rejection.
+    const rrfK = 60
+    const rankings = [
+      keywordRanking,
+      ...(fuzzyRanking.length     > 0 ? [fuzzyRanking]     : []),
+      ...(embeddingRanking.length > 0 ? [embeddingRanking] : []),
+    ]
+    const rrfScores = rrf(rankings, rrfK)
+    const theoreticalMax = rankings.length / (rrfK + 1)
 
-  const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' }> = []
-  for (const cap of manifest.capabilities) {
-    const rrfScore     = rrfScores.get(cap.id) ?? 0
-    const score        = Math.min(100, Math.round((rrfScore / theoreticalMax) * 100))
-    const keywordScore = keywordScoreMap.get(cap.id) ?? 0
-    const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
-    const via: 'keyword' | 'fuzzy' = fuzzyScore > keywordScore ? 'fuzzy' : 'keyword'
-    logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%, rrf: ${rrfScore.toFixed(4)})`)
+      // Pre-compute rank maps — rank 0 = best. Used for accurate via attribution.
+      const rankIn = (list: Array<{ id: string; score: number }>, id: string): number => {
+        const idx = list.findIndex(e => e.id === id)
+        return idx === -1 ? Infinity : idx
+      }
+
+      const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' | 'embedding' }> = []
+      for (const cap of manifest.capabilities) {
+        const rrfScore     = rrfScores.get(cap.id) ?? 0
+        const score        = Math.min(100, Math.round((rrfScore / theoreticalMax) * 100))
+        const keywordScore = keywordScoreMap.get(cap.id) ?? 0
+        const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
+        const embScore     = options.embeddingScores?.get(cap.id) ?? 0
+        // via = whichever signal ranked this capability highest (lowest rank index).
+        // Uses rank position rather than raw score — RRF is rank-based, not score-based.
+        const kRank = rankIn(keywordRanking,   cap.id)
+        const fRank = rankIn(fuzzyRanking,     cap.id)
+        const eRank = rankIn(embeddingRanking, cap.id)
+        const via: 'keyword' | 'fuzzy' | 'embedding' =
+          eRank < fRank && eRank < kRank ? 'embedding' :
+          fRank < kRank                  ? 'fuzzy'     : 'keyword'
+      logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%, emb: ${Math.round(embScore)}%, rrf: ${rrfScore.toFixed(4)})`)
     allScores.push({ cap, score, via })
     if (score > bestScore) {
       bestScore = score
