@@ -102,6 +102,18 @@ export interface LifecycleInfo {
   note?:         string
 }
 
+// ─── EmbeddingProvider ────────────────────────────────────────────────────────
+
+/**
+ * Optional embedding provider for semantic similarity matching.
+ * Zero mandatory dependency — only used when passed to EngineOptions.
+ * Implement with any model: OpenAI, local ONNX, Transformers.js, etc.
+ */
+export interface EmbeddingProvider {
+  /** Encode a batch of texts into fixed-length float vectors. */
+  encode(texts: string[]): Promise<number[][]>
+}
+
 export interface MatchHint {
   /**
    * Advisory preferred matching mode for this capability.

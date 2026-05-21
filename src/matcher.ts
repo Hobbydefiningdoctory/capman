@@ -523,7 +523,9 @@ export interface MatchOptions {
   bm25Index?:      BM25Index   // pre-built index — pass from CapmanEngine for performance
   bm25K1?:         number      // TF saturation (default: 1.5)
   bm25B?:          number      // length normalization (default: 0.75)
-  bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
+bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
+  /** Pre-computed cosine similarity scores keyed by capability ID (0–100). Engine passes these when an EmbeddingProvider is configured. */
+embeddingScores?: Map<string, number>
 }
 
 /**
@@ -713,7 +715,9 @@ export function match(
   }
 }
 
-export interface LLMMatcherOptions {
+  export interface LLMMatcherOptions {
+  /** App name for prompt context — passed from engine, optional for direct callers */
+  app?: string
   llm: (prompt: string) => Promise<string>
 }
 
@@ -730,7 +734,7 @@ export interface LLMMatcherOptions {
  */
 export async function matchWithLLM(
   query: string,
-  manifest: Manifest,
+  topCandidates: Capability[],
   options: LLMMatcherOptions
 ): Promise<MatchResult> {
   // Truncate description and examples — prevents context window overflow and
@@ -738,7 +742,7 @@ export async function matchWithLLM(
   const MAX_DESC_LEN    = 200
   const MAX_EXAMPLE_LEN = 100
 
-  const manifestSummary = manifest.capabilities.map(c =>
+  const manifestSummary = topCandidates.map(c =>
     `- ${c.id} (${c.resolver.type}): ${sanitizeForPrompt(c.description, MAX_DESC_LEN)}${
       c.examples?.length
         ? `\n  examples: ${c.examples.slice(0, 2).map(e => sanitizeForPrompt(e, MAX_EXAMPLE_LEN)).join(', ')}`
@@ -748,7 +752,7 @@ export async function matchWithLLM(
 
   // Sanitize app name — strip newlines and control characters that could
     // break the prompt structure or inject additional instructions.
-  const safeApp = sanitizeForPrompt(manifest.app, 100)
+  const safeApp = sanitizeForPrompt(options.app ?? 'the application', 100)
 
     const prompt = `You are an intent matcher for an AI agent system.
 
@@ -794,7 +798,7 @@ ${JSON.stringify({ user_query: query })}
   const isOOS      = parsed.matched_capability === 'OUT_OF_SCOPE'
   const capability = isOOS
     ? null
-    : manifest.capabilities.find(c => c.id === parsed.matched_capability) ?? null
+    : topCandidates.find(c => c.id === parsed.matched_capability) ?? null
 
   // If LLM returned an unknown capability ID, treat as out of scope
   const effectivelyOOS = isOOS || capability === null
@@ -813,7 +817,7 @@ ${JSON.stringify({ user_query: query })}
   const llmConfidence = effectivelyOOS
     ? 0
     : Math.min(100, Math.max(0, Math.round(parsed.confidence as number)))
-  const allCandidates: MatchCandidate[] = manifest.capabilities.map(c => ({
+    const allCandidates: MatchCandidate[] = topCandidates.map(c => ({
     capabilityId: c.id,
     score:        c.id === capability?.id ? llmConfidence : 0,
     matched:      c.id === capability?.id,

@@ -172,7 +172,7 @@ describe('match()', () => {
 
   describe('matchWithLLM edge cases', () => {
     it('returns out_of_scope when LLM returns unknown capability ID', async () => {
-      const result = await matchWithLLM('show me articles', manifest, {
+      const result = await matchWithLLM('show me articles', manifest.capabilities, {
         llm: async () => JSON.stringify({
           matched_capability: 'nonexistent_capability_xyz',
           confidence: 90,
@@ -187,7 +187,7 @@ describe('match()', () => {
     })
 
     it('handles undefined reasoning from LLM gracefully', async () => {
-      const result = await matchWithLLM('show me articles', manifest, {
+      const result = await matchWithLLM('show me articles', manifest.capabilities, {
         llm: async () => JSON.stringify({
           matched_capability: 'OUT_OF_SCOPE',
           confidence: 0,

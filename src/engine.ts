@@ -144,7 +144,12 @@ export interface EngineOptions {
   * For FileLearningStore, pass halfLifeDays directly to its constructor.
   * @default 30
   */
-  halfLifeDays?: number 
+halfLifeDays?: number
+  /**
+   * Optional embedding provider for semantic similarity as a third RRF signal.
+   * Zero mandatory dependency — omit to use BM25 + Fuse only.
+   */
+  embedding?: import('./types').EmbeddingProvider
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -189,7 +194,9 @@ export class CapmanEngine {
   private bm25B:       number
   private marginAwareLLM:    boolean
   private adaptiveMargin:    number
-  private environment?: string
+  private environment?:     string
+  private embedding?:       import('./types').EmbeddingProvider
+  private capEmbeddings?:   number[][]   // pre-encoded capability texts, parallel to manifest.capabilities
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -239,7 +246,19 @@ export class CapmanEngine {
       ? null
       : (options.learning ?? new MemoryLearningStore(options.halfLifeDays ?? 30))
 
-    logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}`)
+    this.embedding = options.embedding
+    if (this.embedding) {
+      // Pre-encode all capability texts at construction time — one batch call.
+      // Concatenate name + description for richer semantic surface.
+      const texts = this.manifest.capabilities.map(c => `${c.name}: ${c.description}`)
+      this.embedding.encode(texts).then(vecs => {
+        this.capEmbeddings = vecs
+        logger.info('Capability embeddings pre-encoded')
+      }).catch(err => {
+        logger.warn(`EmbeddingProvider pre-encode failed — embedding signal disabled: ${err instanceof Error ? err.message : String(err)}`)
+      })
+    }
+    logger.info(`CapmanEngine initialized — mode: ${this.mode}, cache: ${this.cache ? 'enabled' : 'disabled'}, learning: ${this.learning ? 'enabled' : 'disabled'}, embedding: ${this.embedding ? 'enabled' : 'disabled'}`)
     // ── Manifest version compatibility check ─────────────────────────────────
     this.checkManifestVersion(options.manifest)
   }
@@ -623,6 +642,36 @@ export class CapmanEngine {
     }
   }
 
+  /** Cosine similarity between two equal-length vectors */
+  private cosineSim(a: number[], b: number[]): number {
+    let dot = 0, normA = 0, normB = 0
+    for (let i = 0; i < a.length; i++) {
+      dot   += a[i] * b[i]
+      normA += a[i] * a[i]
+      normB += b[i] * b[i]
+    }
+    const denom = Math.sqrt(normA) * Math.sqrt(normB)
+    return denom === 0 ? 0 : dot / denom
+  }
+
+  /** Encode query and return cosine similarity scores (0–100) keyed by capability ID */
+  private async buildEmbeddingScores(query: string): Promise<Map<string, number> | undefined> {
+    if (!this.embedding || !this.capEmbeddings) return undefined
+    try {
+      const [queryVec] = await this.embedding.encode([query])
+      const scores = new Map<string, number>()
+      this.manifest.capabilities.forEach((cap, i) => {
+        const sim = this.cosineSim(queryVec, this.capEmbeddings![i])
+        // Cosine sim is -1..1; map to 0–100, negatives floored to 0
+        scores.set(cap.id, Math.max(0, Math.round(sim * 100)))
+      })
+      return scores
+    } catch (err) {
+      logger.warn(`Embedding encode failed — skipping embedding signal: ${err instanceof Error ? err.message : String(err)}`)
+      return undefined
+    }
+  }
+  
   private checkMatchHint(capability: Capability): void {
     const hint = capability.matchHint?.preferredMode
     if (!hint || hint === this.mode) return
@@ -916,13 +965,15 @@ export class CapmanEngine {
       let resolvedVia: EngineResult['resolvedVia'] = 'keyword'
 
       // Fuzzy options — never applied in cheap mode
+      const embeddingScores = await this.buildEmbeddingScores(query)
       const fuzzyOpts = {
         fuzzyMatch:     this.fuzzyMatch,
         fuzzyThreshold: this.fuzzyThreshold,
         bm25Index:      this.bm25Index,
-        bm25Ceiling:    this.bm25Ceiling,
         bm25K1:         this.bm25K1,
         bm25B:          this.bm25B,
+        bm25Ceiling:    this.bm25Ceiling,
+        embeddingScores,
       }
 
     switch (this.mode) {
@@ -946,11 +997,17 @@ export class CapmanEngine {
           } else {
             const t = Date.now()
             try {
-              matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
+              const kwResultAccurate = _match(query, this.manifest, fuzzyOpts)
+              const top3Accurate = kwResultAccurate.candidates
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 3)
+                .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
+                .filter(Boolean)
+              matchResult = await _matchWithLLM(query, top3Accurate, { llm: this.llm, app: this.manifest.app })
               this.recordLLMSuccess()
               resolvedVia = 'llm'
               // Merge keyword scores into LLM candidates so boost has real signal for alternatives
-              const kwResult = _match(query, this.manifest, fuzzyOpts)
+              const kwResult = kwResultAccurate
               matchResult = {
                 ...matchResult,
                 candidates: matchResult.candidates.map(c => ({
@@ -1001,7 +1058,12 @@ export class CapmanEngine {
             logger.debug(`Query escalated to LLM: "${query}"`)
             const t2 = Date.now()
             try {
-              matchResult = await _matchWithLLM(query, this.manifest, { llm: this.llm })
+              const top3Balanced = keywordResult.candidates
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 3)
+                .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
+                .filter(Boolean)
+              matchResult = await _matchWithLLM(query, top3Balanced, { llm: this.llm, app: this.manifest.app })
               this.recordLLMSuccess()
               resolvedVia = 'llm'
               // keywordResult already computed above in balanced mode — merge scores
