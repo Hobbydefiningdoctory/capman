@@ -169,12 +169,11 @@ Usage analytics and keyword index — incremental, PII-safe.
 
 Key exports:
 - `LearningStore` interface — `record(entry)`, `getStats()`, `getTopCapabilities(limit)`, `getIndex()`, `destroy()`
-- `FileLearningStore` — persists to `.capman/learning.json`, caps at 10,000 entries. Saves debounced (5s) with synchronous flush on process exit via `flushSync()`
-- `MemoryLearningStore` — in-memory only, used in tests
-- `LearningIndex` — internal class shared by both stores. Maintains keyword index and stats counters incrementally. Eliminates ~80 lines of duplication
+- `FileLearningStore(filePath, halfLifeDays)` — persists to `.capman/learning.json`, caps at 10,000 entries. Saves debounced (5s) with synchronous flush on process exit. Migration guard: pre-v0.7 entries without `lastUpdated` use file mtime as fallback
+- `MemoryLearningStore(halfLifeDays)` — in-memory only, used in tests
+- `LearningIndex(halfLifeDays)` — internal class shared by both stores. Maintains keyword index and stats counters incrementally. Time decay applied lazily on `getStats()` read — not on write. `halfLifeDays` must be positive; throws `RangeError` otherwise Eliminates ~80 lines of duplication
 
-`LearningEntry`:
-- `query` — stored as tokenized keywords only, never raw text. PII (emails, names, IDs) stripped before persistence
+- `LearningEntry` — query stored as tokenized keywords only (PII-safe), plus capabilityId, confidence, intent, resolvedVia, timestamp, `lastUpdated` (ms since epoch — used for time decay)
 - `capabilityId`, `confidence`, `intent`, `extractedParams`
 - `resolvedVia: 'keyword' | 'llm' | 'cache'`
 - `timestamp`
@@ -222,6 +221,8 @@ Key exports:
 - `cacheTtlMs` — optional TTL for cache entries in ms (default: no expiry)
 - `maxLLMCallsPerMinute` — rate limit (default: 60). Set to 0 to disable LLM entirely
 - `llmCooldownMs`, `llmCircuitBreakerThreshold`, `llmCircuitBreakerResetMs`
+- `learningHalfLifeDays` — half-life in days for time-decayed learning (default: 30). Only applies when engine creates its own default store
+- `embedding` — optional `EmbeddingProvider` for semantic similarity. Pre-encodes capabilities at construction and after `loadManifest()`. Fused into RRF as third signal. Failures fall back gracefully to BM25+fuzzy
 
 Matching pipeline in `ask()`:
 1. Cache check — return immediately on hit (public capabilities only). Re-extracts params fresh from current query

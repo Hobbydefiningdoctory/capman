@@ -133,7 +133,7 @@ function computeTopCapabilities(
 // Both FileLearningStore and MemoryLearningStore compose this instead of
 // duplicating the same ~80 lines of index management logic.
 
-  class LearningIndex {
+class LearningIndex {
     index:             Record<string, Record<string, number>> = {}
     /** Tracks when each (word, capabilityId) cell was last reinforced — used for decay */
     lastUpdatedIndex:  Record<string, Record<string, number>> = {}
@@ -142,9 +142,15 @@ function computeTopCapabilities(
     }
     private halfLifeDays: number
 
-    constructor(halfLifeDays = 30) {
-      this.halfLifeDays = halfLifeDays
+  constructor(halfLifeDays = 30) {
+    if (halfLifeDays <= 0) {
+      throw new RangeError(
+        `halfLifeDays must be a positive number — got ${halfLifeDays}. ` +
+        `Use a value in days e.g. 30 (1 month), 7 (1 week).`
+      )
     }
+    this.halfLifeDays = halfLifeDays
+  }
 
     update(entry: LearningEntry): void {
     this.statsCounter.totalQueries++
@@ -157,7 +163,9 @@ function computeTopCapabilities(
       // more signal than a 51% borderline match. Floor of 0.1 ensures
       // borderline matches still contribute, just proportionally less.
       const weight = Math.max(0.1, entry.confidence / 100)
-      const now    = Date.now()
+      // Respect a caller-supplied timestamp (historical replay, rebuild()).
+      // For brand-new real-time entries lastUpdated is undefined — default to now.
+      const now = entry.lastUpdated ?? Date.now()
       // Store weight and timestamp on the entry so subtract() can reverse the
       // exact amount and migration has an accurate record time.
       entry.weight      = weight

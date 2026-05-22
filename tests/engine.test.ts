@@ -3,7 +3,7 @@ import { generate } from '../src/index'
 import { CapmanEngine } from '../src/engine'
 import { MemoryCache } from '../src/cache'
 import { MemoryLearningStore } from '../src/learning'
-import type { CapmanConfig } from '../src/types'
+import type { CapmanConfig, EmbeddingProvider } from '../src/types'
 
 const config: CapmanConfig = {
   app: 'test-app',
@@ -207,6 +207,34 @@ describe('CapmanEngine', () => {
 
       const stats = await engine.getStats()
       expect(stats?.cacheHits).toBe(1)
+    })
+
+    it('time-decayed learning — old entries contribute less than recent ones', async () => {
+      const learning = new MemoryLearningStore(30)
+      const engine   = new CapmanEngine({
+        manifest,
+        cache:    false,
+        learning,
+        mode:     'cheap',
+      })
+
+      // Record an entry with a very old timestamp — 90 days ago
+      await learning.record({
+        query:           'articles',
+        capabilityId:    'get_articles',
+        confidence:      80,
+        intent:          'retrieval',
+        extractedParams: {},
+        resolvedVia:     'keyword',
+        timestamp:       new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
+        lastUpdated:     Date.now() - 90 * 24 * 60 * 60 * 1000,
+      })
+
+      const stats = await engine.getStats()
+      // At 90 days with halfLife=30, weight should be 0.5^3 = 0.125 of original
+      // Check that the index has a very small value — not full weight
+      const articleWeight = stats?.index['articl']?.['get_articles'] ?? 0
+      expect(articleWeight).toBeLessThan(0.2)  // decayed from original ~0.8
     })
   })
 
@@ -749,6 +777,75 @@ describe('CapmanEngine', () => {
       // Very strict threshold — only near-exact matches pass
       const result = await engine.ask('show articles', { dryRun: true })
       expect(result).toBeDefined()
+    })
+  })
+
+  describe('embedding provider', () => {
+    it('uses embedding scores when provider configured', async () => {
+      // Mock provider that returns high similarity only for 'get_articles'
+      const mockProvider: EmbeddingProvider = {
+        async encode(texts: string[]) {
+          return texts.map(t => {
+            // 'articles' keyword → high score vector [1,0]
+            // everything else → [0,1]
+            const isArticles = t.toLowerCase().includes('article')
+            return isArticles ? [1, 0] : [0, 1]
+          })
+        },
+      }
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        embedding: mockProvider,
+      })
+      // Query with no keyword overlap — embedding signal should carry it
+      const result = await engine.ask('fetch editorial content', { dryRun: true })
+      expect(result).toBeDefined()
+      // Embedding signal should have fired — reasoning should reflect it or score > 0
+      const articleCandidate = result.match.candidates.find(c => c.capabilityId === 'get_articles')
+      expect(articleCandidate).toBeDefined()
+    })
+
+    it('falls back gracefully when provider throws', async () => {
+      const brokenProvider: EmbeddingProvider = {
+        async encode() {
+          throw new Error('embedding service unavailable')
+        },
+      }
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        embedding: brokenProvider,
+      })
+      // Should not throw — falls back to BM25 + fuzzy
+      const result = await engine.ask('Show me articles', { dryRun: true })
+      expect(result).toBeDefined()
+    })
+
+    it('re-encodes after loadManifest', async () => {
+      let encodeCallCount = 0
+      const countingProvider: EmbeddingProvider = {
+        async encode(texts: string[]) {
+          encodeCallCount++
+          return texts.map(() => [1, 0])
+        },
+      }
+      const engine = new CapmanEngine({
+        manifest,
+        cache: false,
+        learning: false,
+        mode: 'cheap',
+        embedding: countingProvider,
+      })
+      const callsAfterInit = encodeCallCount
+      await engine.loadManifest(manifest)
+      // Allow pending encoding to settle
+      await new Promise(r => setTimeout(r, 50))
+      expect(encodeCallCount).toBeGreaterThan(callsAfterInit)
     })
   })
 

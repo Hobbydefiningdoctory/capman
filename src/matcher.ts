@@ -292,7 +292,7 @@ export function extractBigrams(tokens: string[]): Set<string> {
  * Reciprocal Rank Fusion — fuses multiple ranked lists into a single score map.
  * k=60 is the standard literature default.
  */
-function rrf(rankings: Array<Array<{ id: string; score: number }>>, k = 60): Map<string, number> {
+  export function rrf(rankings: Array<Array<{ id: string; score: number }>>, k = 60): Map<string, number> {
   const scores = new Map<string, number>()
   for (const ranking of rankings) {
     const sorted = [...ranking].sort((a, b) => b.score - a.score)
@@ -523,9 +523,9 @@ export interface MatchOptions {
   bm25Index?:      BM25Index   // pre-built index — pass from CapmanEngine for performance
   bm25K1?:         number      // TF saturation (default: 1.5)
   bm25B?:          number      // length normalization (default: 0.75)
-bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
+  bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
   /** Pre-computed cosine similarity scores keyed by capability ID (0–100). Engine passes these when an EmbeddingProvider is configured. */
-embeddingScores?: Map<string, number>
+  embeddingScores?: Map<string, number>
 }
 
 /**
@@ -689,13 +689,13 @@ export function match(
         const via: 'keyword' | 'fuzzy' | 'embedding' =
           eRank < fRank && eRank < kRank ? 'embedding' :
           fRank < kRank                  ? 'fuzzy'     : 'keyword'
-      logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%, emb: ${Math.round(embScore)}%, rrf: ${rrfScore.toFixed(4)})`)
-    allScores.push({ cap, score, via })
-    if (score > bestScore) {
-      bestScore = score
-      best = cap
-    }
-  }
+        logger.debug(`  scored "${cap.id}": ${score}% (keyword: ${keywordScore}%, fuzzy: ${Math.round(fuzzyScore)}%, emb: ${Math.round(embScore)}%, rrf: ${rrfScore.toFixed(4)})`)
+          allScores.push({ cap, score, via })
+          if (score > bestScore) {
+            bestScore = score
+            best = cap
+          }
+        }
 
   const candidates = allScores.map(({ cap, score }) => ({
     capabilityId: cap.id,
@@ -723,7 +723,9 @@ export function match(
 
   // Use the via tag tracked during scoring — avoids redundant scoreCapability call.
   const bestEntry = allScores.find(s => s.cap.id === best.id)
-  const winner = bestEntry?.via === 'fuzzy' ? 'fuzzy match' : 'keyword scoring'
+  const winner =
+    bestEntry?.via === 'embedding' ? 'embedding match' :
+    bestEntry?.via === 'fuzzy'     ? 'fuzzy match'     : 'keyword scoring'
 
   // Matched return:
   return {

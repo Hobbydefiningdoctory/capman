@@ -105,6 +105,16 @@ export interface EngineOptions {
   llmCircuitBreakerResetMs?: number
 
   /**
+   * Half-life in days for time-decayed learning weights.
+   * A learning entry that is exactly this many days old retains 50% of its
+   * original weight. Older entries fade faster; recent ones dominate.
+   * Only applies when the engine creates its own default MemoryLearningStore.
+   * If you pass a custom learning store, configure halfLifeDays on it directly.
+   * @default 30
+   */
+  learningHalfLifeDays?: number
+
+  /**
    * Enable fuzzy matching using Fuse.js — catches paraphrases, typos,
    * and morphological variants that exact keyword matching misses.
    * Example: "cancel my booking" matches a capability with "abort reservation" examples.
@@ -145,10 +155,28 @@ export interface EngineOptions {
   * For FileLearningStore, pass halfLifeDays directly to its constructor.
   * @default 30
   */
-halfLifeDays?: number
+  halfLifeDays?: number
   /**
-   * Optional embedding provider for semantic similarity as a third RRF signal.
-   * Zero mandatory dependency — omit to use BM25 + Fuse only.
+   * Optional embedding provider for semantic similarity matching.
+   * When provided, capability texts are pre-encoded at construction time
+   * and query embeddings are computed on each ask() call. The embedding
+   * signal is fused with BM25 and fuzzy signals via RRF.
+   *
+   * Zero mandatory dependencies — bring your own provider:
+   *
+   * @example
+   * const engine = new CapmanEngine({
+   *   manifest,
+   *   embedding: {
+   *     async encode(texts: string[]) {
+   *       // call your embedding API here
+   *       return texts.map(t => myEmbedModel.embed(t))
+   *     }
+   *   }
+   * })
+   *
+   * Note: embedding is purely additive — if encode() throws, the engine
+   * falls back to BM25 + fuzzy scoring without interrupting operation.
    */
   embedding?: EmbeddingProvider
 }
@@ -198,6 +226,8 @@ export class CapmanEngine {
   private environment?:     string
   private embedding?:       EmbeddingProvider
   private capEmbeddings?:   number[][]   // pre-encoded capability texts, parallel to manifest.capabilities
+  /** Resolves when the post-loadManifest re-encode completes. Awaited by buildEmbeddingScores(). */
+  private pendingEmbedding: Promise<void> | null = null
 
   // ── LLM rate limiting ──────────────────────────────────────────────────────
   private maxLLMCallsPerMinute:        number
@@ -244,8 +274,8 @@ export class CapmanEngine {
     // Learning — default MemoryLearningStore (no filesystem writes), or disabled with false
     // Use FileLearningStore explicitly for persistence across restarts
     this.learning = options.learning === false
-      ? null
-      : (options.learning ?? new MemoryLearningStore(options.halfLifeDays ?? 30))
+    ? null
+    : (options.learning ?? new MemoryLearningStore(options.learningHalfLifeDays ?? 30))
 
     this.embedding = options.embedding
     if (this.embedding) {
@@ -662,6 +692,9 @@ export class CapmanEngine {
   /** Encode query and return cosine similarity scores (0–100) keyed by capability ID */
   private async buildEmbeddingScores(query: string): Promise<Map<string, number> | undefined> {
     if (!this.embedding || !this.capEmbeddings) return undefined
+    // Wait for any in-flight re-encode from loadManifest() to finish.
+    // Without this, the first ask() after loadManifest returns uses stale embeddings.
+    if (this.pendingEmbedding) await this.pendingEmbedding
     try {
       const [queryVec] = await this.embedding.encode([query])
       const scores = new Map<string, number>()
@@ -709,18 +742,22 @@ export class CapmanEngine {
     // resolveBaseUrl() reads from this.manifest.servers on each call —
     // server selection updates automatically after loadManifest()
     await this.clearCache()
-      // Re-encode capabilities after manifest swap — stale embeddings misalign with new capabilities
-      if (this.embedding) {
-        const texts = manifest.capabilities.map(c => `${c.name}: ${c.description}`)
-        this.embedding.encode(texts).then(vecs => {
-          this.capEmbeddings = vecs
-          logger.info('Capability embeddings re-encoded after manifest reload')
-        }).catch(err => {
-          this.capEmbeddings = undefined
-          logger.warn(`EmbeddingProvider re-encode failed after loadManifest: ${err instanceof Error ? err.message : String(err)}`)
-        })
-      }
+    // Re-encode capabilities after manifest swap — stale embeddings misalign with new capabilities
+  if (this.embedding) {
+      const texts = manifest.capabilities.map(c => `${c.name}: ${c.description}`)
+      this.pendingEmbedding = this.embedding.encode(texts).then(vecs => {
+        this.capEmbeddings = vecs
+        this.pendingEmbedding = null
+        logger.info('Capability embeddings re-encoded after manifest reload')
+      }).catch(err => {
+        this.capEmbeddings = undefined
+        this.pendingEmbedding = null
+        logger.warn(`EmbeddingProvider re-encode failed after loadManifest: ${err instanceof Error ? err.message : String(err)}`)
+      })
+    } else {
+      this.pendingEmbedding = null
     }
+  }
 
   /**
    * Explain what would happen for a query — without executing it.
@@ -1291,6 +1328,10 @@ export class CapmanEngine {
    * For manifests with ≤100 capabilities this is negligible (<10ms).
    * For very large manifests (500+ capabilities), consider passing
    * `adaptiveMarginOverride` to skip calibration.
+   *
+   * Note: constructor total cost also includes BM25 index build O(capabilities × tokens)
+   * and embedding pre-encoding O(capabilities) if an EmbeddingProvider is configured.
+   * For 100 capabilities with embeddings, expect ~100–500ms depending on provider latency.
    */
   private calibrateAdaptiveMargin(): number {
     if (this.manifest.capabilities.length < 2) return 20
