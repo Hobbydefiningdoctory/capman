@@ -17,13 +17,29 @@ import { VERSION } from './version'
 /**
  * Options for constructing a CapmanEngine instance.
  *
- * ⚠️  CONCURRENCY: CapmanEngine is not safe for sharing across concurrent
- * async request handlers. The LLM rate limiter, circuit breaker, and
- * learning index cache are all instance-level mutable state. In an
- * Express/Fastify/etc. server, either:
- *   (a) Create one engine per request — safest, no shared state
- *   (b) Use a single instance only with cheap mode (no LLM calls)
- *   (c) Add an external mutex around LLM calls if sharing is required
+ * ⚠️  CONCURRENCY: CapmanEngine is NOT safe for sharing a single instance
+ * across concurrent async request handlers in a server environment.
+ *
+ * Node.js is single-threaded — classical data races do not apply. What does
+ * apply is async interleaving: two ask() chains can interleave at await
+ * suspension points. The following hazards are real:
+ *
+ *   - Calling loadManifest() while ask() calls are in-flight: mitigated by
+ *     an optimistic manifestVersion guard — in-flight results skip the cache
+ *     write rather than polluting it with stale data.
+ *   - Sharing one instance across concurrent balanced/accurate LLM calls:
+ *     rate limiter and circuit-breaker state can interleave.
+ *
+ * The following are NOT hazards (synchronous within the event loop):
+ *   - MemoryCache Map mutations
+ *   - LLM counter increments (llmCallsThisMinute++ is atomic in Node.js)
+ *   - statsCounter updates
+ *
+ * Safe patterns:
+ *   (a) One engine per request — safest, zero shared state
+ *   (b) Single shared instance in cheap mode only (no LLM calls)
+ *   (c) ConcurrentCapmanEngine wrapper (v0.8.0) — serialises ask() via
+ *       a zero-dependency promise queue
  *
  * @example
  * // Safe — per-request engine
@@ -205,8 +221,9 @@ export interface EngineResult {
 export class CapmanEngine {
   /** Maximum allowed query length in characters. Queries exceeding this throw RangeError. */
   static readonly MAX_QUERY_LENGTH = 1000
-  private manifest:  Manifest
-  private mode:      MatchMode
+  private manifest:        Manifest
+  private manifestVersion: number = 0
+  private mode:            MatchMode
   private llm?:      LLMMatcherOptions['llm']
   private cache:     CacheStore | null
   private learning:  LearningStore | null
@@ -313,8 +330,11 @@ export class CapmanEngine {
       throw new RangeError(`query exceeds maximum length of ${CapmanEngine.MAX_QUERY_LENGTH} characters`)
     }
 
-    const start = Date.now()
-    const steps: TraceStep[] = []
+    const start           = Date.now()
+    const steps:          TraceStep[] = []
+    // Capture manifest version at entry — used to guard the cache write.
+    // If loadManifest() is called mid-flight, we skip writing stale results.
+    const manifestVersion = this.manifestVersion
 
     // ── Step 1: Check cache ──────────────────────────────────────────────────
     const cacheStart = Date.now()
@@ -442,15 +462,22 @@ export class CapmanEngine {
     //    queries that resolve to the same capability share a cache entry
     if (this.cache && resolution.success && matchResult.capability
         && matchResult.capability.privacy.level === 'public') {
-      const queryKey = normalizeQuery(query)
-      const capKey   = buildCacheKey(
-        query,
-        matchResult.capability.id,
-        matchResult.extractedParams as Record<string, string | null>
-      )
-      await this.cache.set(queryKey, matchResult)
-      await this.cache.set(capKey, matchResult)
-      // capKey always starts with 'cap:' — structurally distinct from queryKey
+      // Optimistic concurrency guard — skip cache write if manifest was swapped
+      // mid-flight. The result was computed against a now-stale manifest and
+      // must not pollute the cache for the new one.
+      if (this.manifestVersion === manifestVersion) {
+        const queryKey = normalizeQuery(query)
+        const capKey   = buildCacheKey(
+          query,
+          matchResult.capability.id,
+          matchResult.extractedParams as Record<string, string | null>
+        )
+        await this.cache.set(queryKey, matchResult)
+        await this.cache.set(capKey, matchResult)
+        // capKey always starts with 'cap:' — structurally distinct from queryKey
+      } else {
+        logger.warn('loadManifest() called mid-flight — skipping cache write for stale result')
+      }
     }
 
     // ── Step 5b: Compute missingParams ───────────────────────────────────────
@@ -734,14 +761,16 @@ export class CapmanEngine {
      * await engine.loadManifest(newManifest)
      */
   async loadManifest(manifest: Manifest): Promise<void> {
-    this.checkManifestVersion(manifest)
-    this.manifest    = manifest
-    this.bm25Index   = buildBM25Index(manifest.capabilities)
-    this.bm25Ceiling = this.calibrateBM25Ceiling()
-    this.adaptiveMargin = this.calibrateAdaptiveMargin()
-    // resolveBaseUrl() reads from this.manifest.servers on each call —
-    // server selection updates automatically after loadManifest()
-    await this.clearCache()
+  this.checkManifestVersion(manifest)
+  // Assign all derived state atomically before any await — an in-flight ask()
+  // must never see a new manifest paired with a stale bm25Index or ceiling.
+  this.manifest       = manifest
+  this.bm25Index      = buildBM25Index(manifest.capabilities)
+  this.bm25Ceiling    = this.calibrateBM25Ceiling()
+  this.adaptiveMargin = this.calibrateAdaptiveMargin()
+  this.manifestVersion++
+  // server selection updates automatically after loadManifest()
+  await this.clearCache()
     // Re-encode capabilities after manifest swap — stale embeddings misalign with new capabilities
   if (this.embedding) {
       const texts = manifest.capabilities.map(c => `${c.name}: ${c.description}`)

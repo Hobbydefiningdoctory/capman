@@ -57,6 +57,7 @@ export type { ResolveOptions, AuthContext } from './resolver'
 
 // ─── Engine (recommended API) ─────────────────────────────────────────────────
 export { CapmanEngine } from './engine'
+export { ConcurrentCapmanEngine } from './concurrent'
 export type { EngineOptions, EngineResult } from './engine'
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
