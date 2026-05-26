@@ -738,10 +738,19 @@ export function match(
   }
 }
 
-  export interface LLMMatcherOptions {
+export type LLMMessage = { role: 'system' | 'user'; content: string }
+
+export interface LLMMatcherOptions {
   /** App name for prompt context — passed from engine, optional for direct callers */
   app?: string
   llm: (prompt: string) => Promise<string>
+  /**
+   * Optional structured message interface. When provided, capman sends
+   * capability context as the system message and the user query as the user
+   * message — stronger injection resistance than single-string prompts.
+   * When both llm and llmWithMessages are provided, llmWithMessages is preferred.
+   */
+  llmWithMessages?: (messages: LLMMessage[]) => Promise<string>
 }
 
 /**
@@ -749,8 +758,8 @@ export function match(
  *
  * ⚠️  SECURITY NOTE: Capability fields are sanitized before injection into
  * the LLM prompt (newlines stripped, delimiters neutralized, length capped).
- * However, the current interface passes a single prompt string — it cannot
- * provide true system/user message separation that some LLM APIs support.
+ * Use llmWithMessages for true system/user message separation, which provides
+ * stronger prompt injection resistance than the single-string llm interface.
  * For maximum injection resistance in high-security deployments, use an LLM
  * wrapper that maps the prompt to a proper system message, keeping user query
  * data in the user turn only.
@@ -801,7 +810,14 @@ Respond ONLY in valid JSON (no markdown, no explanation):
 ${JSON.stringify({ user_query: query })}
 ---USER_QUERY_END---`
 
-  const raw   = await options.llm(prompt)
+  const DELIMITER = '---USER_QUERY_START---'
+  const delimIdx  = prompt.indexOf(DELIMITER)
+  const raw = options.llmWithMessages && delimIdx !== -1
+    ? await options.llmWithMessages([
+        { role: 'system', content: prompt.slice(0, delimIdx).trimEnd() },
+        { role: 'user',   content: prompt.slice(delimIdx + DELIMITER.length).trim() },
+      ])
+    : await options.llm(prompt)
   const clean = raw.replace(/```json|```/g, '').trim()
 
   let parsed: Record<string, unknown>

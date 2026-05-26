@@ -114,6 +114,36 @@ export interface EmbeddingProvider {
   encode(texts: string[]): Promise<number[][]>
 }
 
+// ─── EngineHealth ──────────────────────────────────────────────────────────────
+
+export interface EngineHealth {
+  status: 'healthy' | 'degraded' | 'unhealthy'
+  manifest: {
+    schemaVersion:   string
+    capabilityCount: number
+    app:             string
+  }
+  llm: {
+    circuitBreakerOpen:    boolean
+    circuitBreakerResetIn?: number  // ms remaining — only present when circuit is open
+    callsThisMinute:       number
+    maxCallsPerMinute:     number
+    consecutiveFails:      number
+  }
+  cache: {
+    enabled: boolean
+    size:    number
+  }
+  learning: {
+    enabled:      boolean
+    totalQueries: number
+  }
+  embedding: {
+    enabled: boolean
+    ready:   boolean  // false if pre-encoding is in progress or failed
+  }
+}
+
 export interface MatchHint {
   /**
    * Advisory preferred matching mode for this capability.
@@ -268,8 +298,17 @@ export interface ResolveResult {
   status?:      number
   data?:        unknown
   durationMs?:  number
-}
-// ─── Validation ───────────────────────────────────────────────────────────────
+  /**
+    * When multiple endpoints are configured and at least one succeeded while
+    * at least one failed, this field is populated.
+    * Undefined when all succeeded, all failed, or on dryRun.
+   */
+  partialSuccess?: {
+    completedCalls: ApiCallResult[]
+    failedCalls:    Array<ApiCallResult & { error: string }>
+    }
+  }
+  // ─── Validation ───────────────────────────────────────────────────────────────
 
 export interface ValidationResult {
   valid: boolean

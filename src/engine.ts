@@ -1,10 +1,10 @@
-import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType, MatchCandidate, Capability } from './types'
-import type { LLMMatcherOptions } from './matcher'
+import type { Manifest, MatchResult, ResolveResult, ExecutionTrace, TraceStep, ExplainResult, ExplainCandidate, ApiResolver, NavResolver, HybridResolver, ResolverType, MatchCandidate, Capability , EngineHealth } from './types'
+import type { LLMMatcherOptions, LLMMessage } from './matcher'
 import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
 import type { EmbeddingProvider } from './types'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, filterByTags, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger } from './logger'
@@ -61,6 +61,12 @@ export interface EngineOptions {
   mode?: MatchMode
   /** LLM function for accurate/balanced matching */
   llm?: LLMMatcherOptions['llm']
+  /**
+   * Optional structured message LLM interface. Preferred over llm when both
+   * are supplied. Sends capability context as system message and user query
+   * as user message for stronger prompt injection resistance.
+   */
+  llmWithMessages?: (messages: LLMMessage[]) => Promise<string>
   /** Cache store — defaults to MemoryCache. Use FileCache or ComboCache for persistence. */
   cache?: CacheStore | false
   /** Learning store — defaults to MemoryLearningStore. Use FileLearningStore for persistence. */
@@ -173,6 +179,15 @@ export interface EngineOptions {
   */
   halfLifeDays?: number
   /**
+   * When provided, only capabilities with ALL of these tags are sent to the
+   * LLM in balanced/accurate mode. The full manifest is still used for
+   * BM25/keyword scoring — tag filtering only applies to LLM top-3 selection.
+   * Falls back to the full manifest with a warning if filtering produces
+   * an empty capability set.
+   * @see filterByTags()
+   */
+  llmTagFilter?: string[]
+  /**
    * Optional embedding provider for semantic similarity matching.
    * When provided, capability texts are pre-encoded at construction time
    * and query embeddings are computed on each ask() call. The embedding
@@ -224,7 +239,8 @@ export class CapmanEngine {
   private manifest:        Manifest
   private manifestVersion: number = 0
   private mode:            MatchMode
-  private llm?:      LLMMatcherOptions['llm']
+  private llm?:             LLMMatcherOptions['llm']
+  private llmWithMessages?: (messages: LLMMessage[]) => Promise<string>
   private cache:     CacheStore | null
   private learning:  LearningStore | null
   private baseUrl?:  string
@@ -241,6 +257,7 @@ export class CapmanEngine {
   private marginAwareLLM:    boolean
   private adaptiveMargin:    number
   private environment?:     string
+  private llmTagFilter?:    string[]
   private embedding?:       EmbeddingProvider
   private capEmbeddings?:   number[][]   // pre-encoded capability texts, parallel to manifest.capabilities
   /** Resolves when the post-loadManifest re-encode completes. Awaited by buildEmbeddingScores(). */
@@ -262,7 +279,8 @@ export class CapmanEngine {
   constructor(options: EngineOptions) {
     this.manifest  = options.manifest
     this.mode      = options.mode ?? 'balanced'
-    this.llm       = options.llm
+    this.llm            = options.llm
+    this.llmWithMessages = options.llmWithMessages
     this.baseUrl   = options.baseUrl
     this.environment = options.environment
     this.auth      = options.auth
@@ -294,6 +312,7 @@ export class CapmanEngine {
     ? null
     : (options.learning ?? new MemoryLearningStore(options.learningHalfLifeDays ?? 30))
 
+    this.llmTagFilter = options.llmTagFilter
     this.embedding = options.embedding
     if (this.embedding) {
       // Pre-encode all capability texts at construction time — one batch call.
@@ -625,6 +644,69 @@ export class CapmanEngine {
    */
   async clearCache() {
     if (this.cache) await this.cache.clear()
+  }
+
+  /**
+   * Returns a snapshot of engine health — circuit breaker state, LLM rate
+   * limit status, cache size, learning stats, and embedding readiness.
+   *
+   * Never throws — catches all internal errors and returns status 'unhealthy'
+   * if any field fails to populate.
+   */
+  async health(): Promise<EngineHealth> {
+    try {
+      const now      = Date.now()
+      const elapsed  = this.llmCircuitOpenAt > 0 ? now - this.llmCircuitOpenAt : Infinity
+      const circOpen = this.llmCircuitOpenAt > 0 && elapsed < this.llmCircuitBreakerResetMs
+      const resetIn  = circOpen
+        ? this.llmCircuitBreakerResetMs - elapsed
+        : undefined
+
+      const cacheSize = this.cache   ? await this.cache.size()          : 0
+      const stats     = this.learning ? await this.learning.getStats()  : null
+
+      const status: EngineHealth['status'] =
+        circOpen                       ? 'degraded' :
+        this.llmConsecutiveFails > 0   ? 'degraded' : 'healthy'
+
+      return {
+        status,
+        manifest: {
+          schemaVersion:   this.manifest.schemaVersion ?? 'unknown',
+          capabilityCount: this.manifest.capabilities.length,
+          app:             this.manifest.app,
+        },
+        llm: {
+          circuitBreakerOpen:    circOpen,
+          circuitBreakerResetIn: resetIn,
+          callsThisMinute:       this.llmCallsThisMinute,
+          maxCallsPerMinute:     this.maxLLMCallsPerMinute,
+          consecutiveFails:      this.llmConsecutiveFails,
+        },
+        cache: {
+          enabled: !!this.cache,
+          size:    cacheSize,
+        },
+        learning: {
+          enabled:      !!this.learning,
+          totalQueries: stats?.totalQueries ?? 0,
+        },
+        embedding: {
+          enabled: !!this.embedding,
+          // capEmbeddings is undefined while encoding is in progress or if it failed
+          ready: !!this.embedding && !!this.capEmbeddings,
+        },
+      }
+    } catch {
+      return {
+        status:    'unhealthy',
+        manifest:  { schemaVersion: 'unknown', capabilityCount: 0, app: 'unknown' },
+        llm:       { circuitBreakerOpen: false, callsThisMinute: 0, maxCallsPerMinute: 0, consecutiveFails: 0 },
+        cache:     { enabled: false, size: 0 },
+        learning:  { enabled: false, totalQueries: 0 },
+        embedding: { enabled: false, ready: false },
+      }
+    }
   }
 
   private checkManifestVersion(manifest: Manifest): void {
@@ -1057,6 +1139,18 @@ export class CapmanEngine {
         bm25Ceiling:    this.bm25Ceiling,
         embeddingScores,
       }
+      
+        // Narrow the manifest for LLM top-3 selection when llmTagFilter is set.
+        // BM25 always uses the full manifest — filtering only reduces LLM token cost.
+        const llmManifest = (() => {
+          if (!this.llmTagFilter?.length) return this.manifest
+          const filtered = filterByTags(this.manifest, this.llmTagFilter)
+          if (filtered.capabilities.length === 0) {
+            logger.warn(`llmTagFilter ${JSON.stringify(this.llmTagFilter)} matched no capabilities — falling back to full manifest`)
+            return this.manifest
+          }
+          return filtered
+        })()
 
     switch (this.mode) {
       case 'cheap': {
@@ -1084,13 +1178,13 @@ export class CapmanEngine {
                 .sort((a, b) => b.score - a.score)
                 .filter(c => c.score > 0)
                 .slice(0, 3)
-                .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
+                .map(c => llmManifest.capabilities.find(cap => cap.id === c.capabilityId)!)
                 .filter(Boolean)
               // Skip LLM if no candidates scored above zero — no meaningful top-3 to discriminate
               if (top3Accurate.length === 0) {
                 matchResult = kwResultAccurate
               } else {
-                const llmResult = await _matchWithLLM(query, top3Accurate, { llm: this.llm, app: this.manifest.app })
+                const llmResult = await _matchWithLLM(query, top3Accurate, { llm: this.llm, llmWithMessages: this.llmWithMessages, app: this.manifest.app })
                 this.recordLLMSuccess()
                 resolvedVia = 'llm'
                 // If LLM says OOS but keyword had a match, the correct capability may have
@@ -1150,14 +1244,14 @@ export class CapmanEngine {
                 .sort((a, b) => b.score - a.score)
                 .filter(c => c.score > 0)
                 .slice(0, 3)
-                .map(c => this.manifest.capabilities.find(cap => cap.id === c.capabilityId)!)
+                .map(c => llmManifest.capabilities.find(cap => cap.id === c.capabilityId)!)
                 .filter(Boolean)
               // Balanced mode only escalates when keyword confidence is low but > 0 —
               // top3 should always be non-empty here, but guard anyway
               if (top3Balanced.length === 0) {
                 matchResult = keywordResult
               } else {
-                const llmResult = await _matchWithLLM(query, top3Balanced, { llm: this.llm, app: this.manifest.app })
+                const llmResult = await _matchWithLLM(query, top3Balanced, { llm: this.llm, llmWithMessages: this.llmWithMessages, app: this.manifest.app })
                 this.recordLLMSuccess()
                 resolvedVia = 'llm'
                 // If LLM returns OOS but keyword had a scored candidate, fall back to keyword

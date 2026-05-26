@@ -312,6 +312,33 @@ async function resolveApi(
       })
     )
 
+    const succeeded = enrichedCalls.filter(
+      c => typeof c.status === 'number' && c.status >= 200 && c.status < 300
+    )
+    const failed = enrichedCalls.filter(
+      c => !c.status || c.status < 200 || c.status >= 300
+    )
+
+    // Partial success — at least one endpoint ran and at least one failed.
+    // Side effects from succeeded calls cannot be rolled back; surface this
+    // to the consumer so they can handle compensation themselves.
+    if (succeeded.length > 0 && failed.length > 0) {
+      return {
+        success:      false,
+        resolverType: 'api',
+        apiCalls:     enrichedCalls,
+        durationMs:   Date.now() - startTime,
+        error:        `${failed.length}/${enrichedCalls.length} endpoints failed`,
+        partialSuccess: {
+          completedCalls: succeeded,
+          failedCalls:    failed.map(c => ({
+            ...c,
+            error: c.error ?? `HTTP ${c.status ?? 0}`,
+          })),
+        },
+      }
+    }
+
     const failedCall = enrichedCalls.find(
       c => typeof c.status === 'number' && (c.status === 0 || c.status >= 400)
     )

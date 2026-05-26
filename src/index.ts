@@ -31,6 +31,7 @@ export type {
   ParamType,
   MatchHint,
   EmbeddingProvider,
+  EngineHealth,
 } from './types'
 
 export {
@@ -51,6 +52,7 @@ export { LLMParseError } from './matcher'
 export type { LLMMatcherOptions } from './matcher'
 export { TYPE_PATTERNS } from './matcher'
 export { filterByTags } from './matcher'
+export type { LLMMessage } from './matcher'
 
 export { resolve } from './resolver'
 export type { ResolveOptions, AuthContext } from './resolver'
