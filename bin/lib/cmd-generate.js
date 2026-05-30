@@ -247,6 +247,28 @@ async function enrichExamples(config, apiKey, provider) {
   return { ...config, capabilities: enrichedCapabilities }
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Format a byte count as a human-readable string: "774.6 KB" or "2.1 MB". */
+function formatBytes(bytes) {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
+  return `${(bytes / 1_000).toFixed(1)} KB`
+}
+
+/**
+ * Print the manifest success line and, if the file is large, a visibility
+ * warning. On some editors/file-explorers files > 1 MB are not shown by default.
+ */
+function logManifestWritten(filePath, bytes) {
+  log.success(`Manifest written to ${c.teal}${filePath}${c.reset} (${formatBytes(bytes)})`)
+  if (bytes >= 1_000_000) {
+    console.log()
+    console.log(`  ${c.yellow}⚠  Large manifest (${formatBytes(bytes)}) — your file explorer may not show it.${c.reset}`)
+    console.log(`     Verify it exists with:  ${c.teal}ls -la ${filePath}${c.reset}`)
+    console.log(`     Or open it with:        ${c.teal}cat ${filePath} | head -30${c.reset}`)
+  }
+}
+
 // ─── Command ──────────────────────────────────────────────────────────────────
 
 module.exports = async function cmdGenerate() {
@@ -309,8 +331,8 @@ module.exports = async function cmdGenerate() {
 
     try {
       const manifest = generate(config)
-      writeManifest(manifest, outPath)
-      log.success(`Manifest written to ${outPath}`)
+      const written  = writeManifest(manifest, outPath)
+      logManifestWritten(written.path, written.bytes)
       log.info(`${manifest.capabilities.length} capabilities registered`)
     } catch (e) {
       log.warn(`Could not generate manifest: ${e.message}`)
@@ -397,8 +419,8 @@ module.exports = async function cmdGenerate() {
 
     try {
       const manifest = generate(config)
-      writeManifest(manifest, outPath)
-      log.success(`Manifest written to ${outPath}`)
+      const written  = writeManifest(manifest, outPath)
+      logManifestWritten(written.path, written.bytes)
       log.info(`${manifest.capabilities.length} capabilities generated`)
     } catch (e) {
       log.warn(`Manifest generation failed — review your config: ${e.message}`)
@@ -459,8 +481,8 @@ module.exports = async function cmdGenerate() {
     }
   }
 
-  writeManifest(manifest, outPath)
-  log.success(`Manifest written to ${outPath}`)
+  const written = writeManifest(manifest, outPath)
+  logManifestWritten(written.path, written.bytes)
   log.info(`${manifest.capabilities.length} capabilities registered`)
   console.log()
 }

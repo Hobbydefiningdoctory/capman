@@ -104,7 +104,31 @@ export function loadConfig(configPath?: string): CapmanConfig {
   )
 }
 
-export function writeManifest(manifest: Manifest, outputPath = 'manifest.json'): string {
+/**
+ * Result returned by `writeManifest()`.
+ *
+ * **Breaking change from v0.6.x:** the function previously returned `string`
+ * (the resolved output path). It now returns this object. Callers that stored
+ * the return value as `string` must update to use `.path`:
+ *
+ * ```ts
+ * // Before
+ * const p: string = writeManifest(manifest)
+ *
+ * // After
+ * const { path, bytes } = writeManifest(manifest)
+ * ```
+ *
+ * Callers that ignored the return value are unaffected.
+ */
+export interface WriteManifestResult {
+  /** Absolute path to the written manifest file. */
+  path:  string
+  /** Size of the written file in bytes (UTF-8 encoded). */
+  bytes: number
+}
+
+export function writeManifest(manifest: Manifest, outputPath = 'manifest.json'): WriteManifestResult {
   const cwd           = process.cwd()
   const resolved      = path.resolve(cwd, outputPath)
   const allowedPrefix = cwd === '/' ? '/' : cwd + path.sep
@@ -114,13 +138,35 @@ export function writeManifest(manifest: Manifest, outputPath = 'manifest.json'):
       `Resolved: ${resolved}\nAllowed:  ${cwd}`
     )
   }
+
+  // Serialize once — reused for both the write and the byte count.
+  // JSON.stringify(manifest, null, 2) called twice would waste CPU on large
+  // manifests (e.g. Stripe: 582 capabilities ≈ 750 KB).
+  const json  = JSON.stringify(manifest, null, 2)
+  // Buffer.byteLength gives the true UTF-8 byte count, which matches what
+  // fs.writeFileSync will actually write (string default encoding is utf-8).
+  const bytes = Buffer.byteLength(json, 'utf8')
+
   // Write atomically via tmp → rename — same pattern used by FileCache and
   // FileLearningStore. A crash or SIGKILL mid-write leaves the .tmp file, not
   // a truncated manifest.json, so the next readManifest() can still parse it.
   const tmp = `${resolved}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2))
+  fs.writeFileSync(tmp, json)
   fs.renameSync(tmp, resolved)
-  return resolved
+
+  // Post-write verification — on some containerised/overlay filesystems,
+  // renameSync() silently does nothing instead of throwing when the rename
+  // fails (e.g. cross-device move, read-only overlay). Without this check,
+  // the CLI prints "✓ Manifest written" while the file never arrived.
+  if (!fs.existsSync(resolved)) {
+    throw new Error(
+      `writeManifest: file write appeared to succeed but "${resolved}" does not exist.\n` +
+      `The .tmp file may still be present at "${tmp}".\n` +
+      `Check filesystem permissions and available disk space.`
+    )
+  }
+
+  return { path: resolved, bytes }
 }
 
 export function readManifest(manifestPath = 'manifest.json'): Manifest {

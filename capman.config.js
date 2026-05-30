@@ -142,10 +142,10 @@
     },
     {
       "id": "post_accounts",
-      "name": "Post Accounts",
+      "name": "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>",
       "description": "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>",
       "examples": [
-        "Post Accounts"
+        "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>"
       ],
       "params": [],
       "returns": [
@@ -348,11 +348,11 @@
     },
     {
       "id": "post_accounts_account_bank_accounts_id",
-      "name": "Post Accounts Account Bank Accounts Id",
+      "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "examples": [
-        "Post Accounts Account Bank Accounts Id",
-        "Post Accounts Account Bank Accounts Id by account and id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by account and id"
       ],
       "params": [
         {
@@ -689,11 +689,11 @@
     },
     {
       "id": "post_accounts_account_external_accounts_id",
-      "name": "Post Accounts Account External Accounts Id",
+      "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "examples": [
-        "Post Accounts Account External Accounts Id",
-        "Post Accounts Account External Accounts Id by account and id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by account and id"
       ],
       "params": [
         {
@@ -1269,10 +1269,10 @@
     },
     {
       "id": "get_apple_pay_domains",
-      "name": "Get Apple Pay Domains",
+      "name": "<p>List apple pay domains.</p>",
       "description": "<p>List apple pay domains.</p>",
       "examples": [
-        "Get Apple Pay Domains",
+        "<p>List apple pay domains.</p>",
         "<p>List apple pay domains"
       ],
       "params": [
@@ -1325,10 +1325,10 @@
     },
     {
       "id": "post_apple_pay_domains",
-      "name": "Post Apple Pay Domains",
+      "name": "<p>Create an apple pay domain.</p>",
       "description": "<p>Create an apple pay domain.</p>",
       "examples": [
-        "Post Apple Pay Domains",
+        "<p>Create an apple pay domain.</p>",
         "<p>Create an apple pay domain"
       ],
       "params": [],
@@ -1350,12 +1350,12 @@
     },
     {
       "id": "get_apple_pay_domains_domain",
-      "name": "Get Apple Pay Domains Domain",
+      "name": "<p>Retrieve an apple pay domain.</p>",
       "description": "<p>Retrieve an apple pay domain.</p>",
       "examples": [
-        "Get Apple Pay Domains Domain",
+        "<p>Retrieve an apple pay domain.</p>",
         "<p>Retrieve an apple pay domain",
-        "Get Apple Pay Domains Domain by domain"
+        "<p>Retrieve an apple pay domain.</p> by domain"
       ],
       "params": [
         {
@@ -1389,12 +1389,12 @@
     },
     {
       "id": "delete_apple_pay_domains_domain",
-      "name": "Delete Apple Pay Domains Domain",
+      "name": "<p>Delete an apple pay domain.</p>",
       "description": "<p>Delete an apple pay domain.</p>",
       "examples": [
-        "Delete Apple Pay Domains Domain",
+        "<p>Delete an apple pay domain.</p>",
         "<p>Delete an apple pay domain",
-        "Delete Apple Pay Domains Domain by domain"
+        "<p>Delete an apple pay domain.</p> by domain"
       ],
       "params": [
         {
@@ -1596,6 +1596,39 @@
           {
             "method": "GET",
             "path": "/v1/application_fees/{id}"
+          }
+        ]
+      },
+      "privacy": {
+        "level": "user_owned"
+      }
+    },
+    {
+      "id": "post_application_fees_id_refund",
+      "name": "Post Application Fees Id Refund",
+      "description": "Refund application fee",
+      "examples": [
+        "Post Application Fees Id Refund",
+        "Refund application fee",
+        "Post Application Fees Id Refund by id"
+      ],
+      "params": [
+        {
+          "name": "id",
+          "description": "Id",
+          "required": true,
+          "source": "user_query"
+        }
+      ],
+      "returns": [
+        "refund"
+      ],
+      "resolver": {
+        "type": "api",
+        "endpoints": [
+          {
+            "method": "POST",
+            "path": "/v1/application_fees/{id}/refund"
           }
         ]
       },
@@ -3380,10 +3413,10 @@
     },
     {
       "id": "post_charges",
-      "name": "Post Charges",
+      "name": "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>",
       "description": "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>",
       "examples": [
-        "Post Charges"
+        "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>"
       ],
       "params": [],
       "returns": [
@@ -3558,12 +3591,12 @@
     },
     {
       "id": "get_charges_charge_dispute",
-      "name": "Get Charges Charge Dispute",
+      "name": "<p>Retrieve a dispute for a specified charge.</p>",
       "description": "<p>Retrieve a dispute for a specified charge.</p>",
       "examples": [
-        "Get Charges Charge Dispute",
+        "<p>Retrieve a dispute for a specified charge.</p>",
         "<p>Retrieve a dispute for a specified charge",
-        "Get Charges Charge Dispute by charge"
+        "<p>Retrieve a dispute for a specified charge.</p> by charge"
       ],
       "params": [
         {
@@ -3588,6 +3621,72 @@
           {
             "method": "GET",
             "path": "/v1/charges/{charge}/dispute"
+          }
+        ]
+      },
+      "privacy": {
+        "level": "user_owned"
+      }
+    },
+    {
+      "id": "post_charges_charge_dispute",
+      "name": "Post Charges Charge Dispute",
+      "description": "Create dispute",
+      "examples": [
+        "Post Charges Charge Dispute",
+        "Create dispute",
+        "Post Charges Charge Dispute by charge"
+      ],
+      "params": [
+        {
+          "name": "charge",
+          "description": "Charge",
+          "required": true,
+          "source": "user_query"
+        }
+      ],
+      "returns": [
+        "dispute"
+      ],
+      "resolver": {
+        "type": "api",
+        "endpoints": [
+          {
+            "method": "POST",
+            "path": "/v1/charges/{charge}/dispute"
+          }
+        ]
+      },
+      "privacy": {
+        "level": "user_owned"
+      }
+    },
+    {
+      "id": "post_charges_charge_dispute_close",
+      "name": "Post Charges Charge Dispute Close",
+      "description": "Close dispute",
+      "examples": [
+        "Post Charges Charge Dispute Close",
+        "Close dispute",
+        "Post Charges Charge Dispute Close by charge"
+      ],
+      "params": [
+        {
+          "name": "charge",
+          "description": "Charge",
+          "required": true,
+          "source": "user_query"
+        }
+      ],
+      "returns": [
+        "close"
+      ],
+      "resolver": {
+        "type": "api",
+        "endpoints": [
+          {
+            "method": "POST",
+            "path": "/v1/charges/{charge}/dispute/close"
           }
         ]
       },
@@ -3718,12 +3817,12 @@
     },
     {
       "id": "get_charges_charge_refunds_refund",
-      "name": "Get Charges Charge Refunds Refund",
+      "name": "<p>Retrieves the details of an existing refund.</p>",
       "description": "<p>Retrieves the details of an existing refund.</p>",
       "examples": [
-        "Get Charges Charge Refunds Refund",
+        "<p>Retrieves the details of an existing refund.</p>",
         "<p>Retrieves the details of an existing refund",
-        "Get Charges Charge Refunds Refund by charge and refund"
+        "<p>Retrieves the details of an existing refund.</p> by charge and refund"
       ],
       "params": [
         {
@@ -3763,12 +3862,12 @@
     },
     {
       "id": "post_charges_charge_refunds_refund",
-      "name": "Post Charges Charge Refunds Refund",
+      "name": "<p>Update a specified refund.</p>",
       "description": "<p>Update a specified refund.</p>",
       "examples": [
-        "Post Charges Charge Refunds Refund",
+        "<p>Update a specified refund.</p>",
         "<p>Update a specified refund",
-        "Post Charges Charge Refunds Refund by charge and refund"
+        "<p>Update a specified refund.</p> by charge and refund"
       ],
       "params": [
         {
@@ -5842,12 +5941,12 @@
     },
     {
       "id": "post_customers_customer_bank_accounts_id",
-      "name": "Post Customers Customer Bank Accounts Id",
+      "name": "<p>Update a specified source for a given customer.</p>",
       "description": "<p>Update a specified source for a given customer.</p>",
       "examples": [
-        "Post Customers Customer Bank Accounts Id",
+        "<p>Update a specified source for a given customer.</p>",
         "<p>Update a specified source for a given customer",
-        "Post Customers Customer Bank Accounts Id by customer and id"
+        "<p>Update a specified source for a given customer.</p> by customer and id"
       ],
       "params": [
         {
@@ -6092,12 +6191,12 @@
     },
     {
       "id": "post_customers_customer_cards_id",
-      "name": "Post Customers Customer Cards Id",
+      "name": "<p>Update a specified source for a given customer.</p>",
       "description": "<p>Update a specified source for a given customer.</p>",
       "examples": [
-        "Post Customers Customer Cards Id",
+        "<p>Update a specified source for a given customer.</p>",
         "<p>Update a specified source for a given customer",
-        "Post Customers Customer Cards Id by customer and id"
+        "<p>Update a specified source for a given customer.</p> by customer and id"
       ],
       "params": [
         {
@@ -6341,6 +6440,45 @@
       }
     },
     {
+      "id": "get_customers_customer_discount",
+      "name": "Get Customers Customer Discount",
+      "description": "Get customer discount",
+      "examples": [
+        "Get Customers Customer Discount",
+        "Get customer discount",
+        "Get Customers Customer Discount by customer"
+      ],
+      "params": [
+        {
+          "name": "customer",
+          "description": "Customer",
+          "required": true,
+          "source": "user_query"
+        },
+        {
+          "name": "expand",
+          "description": "Specifies which fields in the response should be expanded.",
+          "required": false,
+          "source": "user_query"
+        }
+      ],
+      "returns": [
+        "discount"
+      ],
+      "resolver": {
+        "type": "api",
+        "endpoints": [
+          {
+            "method": "GET",
+            "path": "/v1/customers/{customer}/discount"
+          }
+        ]
+      },
+      "privacy": {
+        "level": "user_owned"
+      }
+    },
+    {
       "id": "delete_customers_customer_discount",
       "name": "Delete a customer discount",
       "description": "<p>Removes the currently applied discount on a customer.</p>",
@@ -6522,12 +6660,12 @@
     },
     {
       "id": "get_customers_customer_sources",
-      "name": "Get Customers Customer Sources",
+      "name": "<p>List sources for a specified customer.</p>",
       "description": "<p>List sources for a specified customer.</p>",
       "examples": [
-        "Get Customers Customer Sources",
+        "<p>List sources for a specified customer.</p>",
         "<p>List sources for a specified customer",
-        "Get Customers Customer Sources by customer"
+        "<p>List sources for a specified customer.</p> by customer"
       ],
       "params": [
         {
@@ -6617,12 +6755,12 @@
     },
     {
       "id": "get_customers_customer_sources_id",
-      "name": "Get Customers Customer Sources Id",
+      "name": "<p>Retrieve a specified source for a given customer.</p>",
       "description": "<p>Retrieve a specified source for a given customer.</p>",
       "examples": [
-        "Get Customers Customer Sources Id",
+        "<p>Retrieve a specified source for a given customer.</p>",
         "<p>Retrieve a specified source for a given customer",
-        "Get Customers Customer Sources Id by customer and id"
+        "<p>Retrieve a specified source for a given customer.</p> by customer and id"
       ],
       "params": [
         {
@@ -6662,12 +6800,12 @@
     },
     {
       "id": "post_customers_customer_sources_id",
-      "name": "Post Customers Customer Sources Id",
+      "name": "<p>Update a specified source for a given customer.</p>",
       "description": "<p>Update a specified source for a given customer.</p>",
       "examples": [
-        "Post Customers Customer Sources Id",
+        "<p>Update a specified source for a given customer.</p>",
         "<p>Update a specified source for a given customer",
-        "Post Customers Customer Sources Id by customer and id"
+        "<p>Update a specified source for a given customer.</p> by customer and id"
       ],
       "params": [
         {
@@ -6982,6 +7120,51 @@
           {
             "method": "DELETE",
             "path": "/v1/customers/{customer}/subscriptions/{subscription_exposed_id}"
+          }
+        ]
+      },
+      "privacy": {
+        "level": "user_owned"
+      }
+    },
+    {
+      "id": "get_customers_customer_subscriptions_subscription_exposed_id_discount",
+      "name": "Get Customers Customer Subscriptions Subscription Exposed Id Discount",
+      "description": "Get subscription discount",
+      "examples": [
+        "Get Customers Customer Subscriptions Subscription Exposed Id Discount",
+        "Get subscription discount",
+        "Get Customers Customer Subscriptions Subscription Exposed Id Discount by customer and subscription exposed id"
+      ],
+      "params": [
+        {
+          "name": "customer",
+          "description": "Customer",
+          "required": true,
+          "source": "user_query"
+        },
+        {
+          "name": "expand",
+          "description": "Specifies which fields in the response should be expanded.",
+          "required": false,
+          "source": "user_query"
+        },
+        {
+          "name": "subscription_exposed_id",
+          "description": "Subscription Exposed Id",
+          "required": true,
+          "source": "user_query"
+        }
+      ],
+      "returns": [
+        "discount"
+      ],
+      "resolver": {
+        "type": "api",
+        "endpoints": [
+          {
+            "method": "GET",
+            "path": "/v1/customers/{customer}/subscriptions/{subscription_exposed_id}/discount"
           }
         ]
       },
@@ -7890,11 +8073,11 @@
     },
     {
       "id": "post_external_accounts_id",
-      "name": "Post External Accounts Id",
+      "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
       "examples": [
-        "Post External Accounts Id",
-        "Post External Accounts Id by id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by id"
       ],
       "params": [
         {
@@ -17149,12 +17332,12 @@
     },
     {
       "id": "get_sources_source_source_transactions",
-      "name": "Get Sources Source Source Transactions",
+      "name": "<p>List source transactions for a given source.</p>",
       "description": "<p>List source transactions for a given source.</p>",
       "examples": [
-        "Get Sources Source Source Transactions",
+        "<p>List source transactions for a given source.</p>",
         "<p>List source transactions for a given source",
-        "Get Sources Source Source Transactions by source"
+        "<p>List source transactions for a given source.</p> by source"
       ],
       "params": [
         {
@@ -17251,12 +17434,12 @@
     },
     {
       "id": "post_sources_source_verify",
-      "name": "Post Sources Source Verify",
+      "name": "<p>Verify a given source.</p>",
       "description": "<p>Verify a given source.</p>",
       "examples": [
-        "Post Sources Source Verify",
+        "<p>Verify a given source.</p>",
         "<p>Verify a given source",
-        "Post Sources Source Verify by source"
+        "<p>Verify a given source.</p> by source"
       ],
       "params": [
         {

@@ -42,6 +42,7 @@ export {
   validate,
   generateStarterConfig,
 } from './generator'
+export type { WriteManifestResult } from './generator'
 
 export {
   match,
