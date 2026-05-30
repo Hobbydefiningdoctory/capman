@@ -25,7 +25,7 @@
  */
 
 import { CapmanEngine, type EngineOptions, type EngineResult } from './engine'
-import type { Manifest } from './types'
+import type { Manifest, EngineHealth } from './types'
 import type { ResolveOptions } from './resolver'
 import type { ExplainResult } from './types'
 
@@ -73,8 +73,13 @@ export class ConcurrentCapmanEngine {
     return this.engine.getTopCapabilities(limit)
   }
 
-  /** Clear the cache. */
+/** Clear the cache. */
   clearCache(): Promise<void> {
     return this.engine.clearCache()
+  }
+
+  /** Returns engine health snapshot — circuit breaker, LLM rate limit, cache, learning, embedding. */
+  health(): Promise<EngineHealth> {
+    return this.engine.health()
   }
 }

@@ -813,11 +813,11 @@ ${JSON.stringify({ user_query: query })}
   const DELIMITER = '---USER_QUERY_START---'
   const delimIdx  = prompt.indexOf(DELIMITER)
   const raw = options.llmWithMessages && delimIdx !== -1
-    ? await options.llmWithMessages([
-        { role: 'system', content: prompt.slice(0, delimIdx).trimEnd() },
-        { role: 'user',   content: prompt.slice(delimIdx + DELIMITER.length).trim() },
-      ])
-    : await options.llm(prompt)
+  ? await options.llmWithMessages([
+      { role: 'system', content: prompt.slice(0, delimIdx).trimEnd() },
+      { role: 'user',   content: prompt.slice(delimIdx + DELIMITER.length).trim().replace(/\n---USER_QUERY_END---$/, '').trim() },
+    ])
+  : await options.llm(prompt)
   const clean = raw.replace(/```json|```/g, '').trim()
 
   let parsed: Record<string, unknown>

@@ -1085,24 +1085,26 @@ describe('CapmanEngine', () => {
       }
       const taggedManifest = generate(taggedConfig)
 
-      const capturedCandidates: string[] = []
+      let systemMessageContent = ''
       const engine = new CapmanEngine({
-        manifest: taggedManifest,
-        mode:     'accurate',
+        manifest:     taggedManifest,
+        mode:         'accurate',
         llmTagFilter: ['content'],
-        llm: async () => {
-          // Record which capability IDs were visible to the LLM prompt — we inspect
-          // this by capturing the candidates passed via the LLM function argument
+        llm: async () =>
+          JSON.stringify({ matched_capability: 'OUT_OF_SCOPE', confidence: 0, reasoning: 'test' }),
+        llmWithMessages: async (messages) => {
+          // Capture system message — contains capability context sent to LLM
+          systemMessageContent = messages.find(m => m.role === 'system')?.content ?? ''
           return JSON.stringify({ matched_capability: 'OUT_OF_SCOPE', confidence: 0, reasoning: 'test' })
         },
       })
 
       await engine.ask('show me articles').catch(() => {})
 
-      // The LLM only sees content-tagged capabilities — commerce capabilities excluded
-      // Verified indirectly: if filtering worked, get_orders never reaches the LLM prompt
-      // Direct verification: engine constructed without error and ran without fallback warn
-      expect(engine).toBeDefined()
+      // System message must contain the content-tagged capability
+      expect(systemMessageContent).toContain('get_articles')
+      // Commerce-tagged capability must be excluded from LLM context
+      expect(systemMessageContent).not.toContain('get_orders')
     })
 
     it('falls back to full manifest when llmTagFilter matches nothing', async () => {

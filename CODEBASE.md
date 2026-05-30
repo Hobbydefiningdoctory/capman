@@ -381,3 +381,205 @@ Developer writes capman.config.js
          ↓
   EngineResult   → { match, resolution, trace, resolvedVia }
 ```
+
+---
+
+## Updates — fields and modules added since original CODEBASE.md
+
+### `src/concurrent.ts` — ConcurrentCapmanEngine
+
+Not in the original map. Wraps `CapmanEngine` with a FIFO promise queue that serialises `ask()` and `explain()` calls. Zero external dependencies.
+
+Key exports:
+- `ConcurrentCapmanEngine` — drop-in replacement for `CapmanEngine` in shared-instance server deployments
+
+Why a promise queue instead of a mutex: same serialisation guarantee, zero dependencies, simpler audit surface.
+
+`ask()` and `explain()` are the only methods serialised. All other methods (`loadManifest`, `getStats`, `getTopCapabilities`, `clearCache`) are delegated directly to the underlying engine — they are either read-only or internally safe.
+
+A failed `ask()` or `explain()` resets the queue tail to a resolved promise — one bad request cannot permanently stall subsequent callers.
+
+Three safe concurrency patterns documented in `CONCURRENCY.md`:
+- **Pattern A** — per-request engine (recommended default; zero shared state)
+- **Pattern B** — `ConcurrentCapmanEngine` (shared instance, serialised queue; use when learning accumulation or warm cache matters)
+- **Pattern C** — shared instance in `cheap` mode (fully synchronous, no LLM, no wrapper needed)
+
+---
+
+### `src/types.ts` — additions since original
+
+**`EngineHealth`** (returned by `engine.health()`):
+```typescript
+{
+  status: 'healthy' | 'degraded' | 'unhealthy'
+  manifest:  { schemaVersion, capabilityCount, app }
+  llm:       { circuitBreakerOpen, circuitBreakerResetIn?, callsThisMinute, maxCallsPerMinute, consecutiveFails }
+  cache:     { enabled, size }
+  learning:  { enabled, totalQueries }
+  embedding: { enabled, ready }   // ready=false while pre-encoding is in progress or failed
+}
+```
+`status` is `'degraded'` if circuit breaker is open or consecutive fails > 0. `'unhealthy'` only if `health()` itself threw internally — it never re-throws.
+
+**`EngineResult`** — additional fields beyond original:
+- `verdict: 'clear' | 'marginal' | 'uncertain'` — confidence assessment between top-2 candidates. `'clear'` = gap above adaptive threshold; `'marginal'` = top-2 are close; `'uncertain'` = overall confidence below 60
+- `margin: number` — raw point gap between top-2 candidates, regardless of verdict
+- `missingParams?: string[]` — required params that couldn't be extracted. LLM extraction is attempted first when available; only populated if that also fails
+
+**`LifecycleInfo`** on `Capability`:
+```typescript
+{
+  status:       'stable' | 'beta' | 'experimental' | 'deprecated'
+  deprecatedAt?: string   // ISO 8601
+  sunsetAt?:     string   // ISO 8601 — engine logs louder warning when this date has passed
+  successor?:    string   // capability id to use instead
+  note?:         string   // human-readable message
+}
+```
+
+**`CapabilityError`** on `Capability.errors[]`:
+```typescript
+{
+  code:        string   // machine-readable, e.g. 'ORDER_NOT_FOUND'
+  description: string
+  httpStatus?: number
+  retryable?:  boolean  // true = transient, retry safe; false = permanent, ask user
+}
+```
+When an API call fails and the HTTP status matches an entry, `resolution.matchedError` is populated.
+
+**`MatchHint`** on `Capability.matchHint`:
+- `preferredMode?: MatchMode` — advisory only. Engine logs a warning when ignoring it (mode mismatch) but never enforces it.
+
+**`EmbeddingProvider`** interface:
+- `encode(texts: string[]): Promise<number[][]>` — batch encode texts to float vectors. Bring your own model (OpenAI, local ONNX, Transformers.js, etc.)
+
+**`ParamType`** on `CapabilityParam.type`:
+`'string' | 'number' | 'boolean' | 'date' | 'email' | 'url' | 'enum' | 'object'`
+- `email`, `date`, `url` map to built-in `TYPE_PATTERNS` regex in `matcher.ts`
+- `enum` requires `CapabilityParam.enum[]` to be set; extracted values not in the list are rejected and added to `missingParams`
+- `number` / `boolean` / `object` affect LLM extraction coercion
+
+**`CapabilityParam`** additional fields:
+- `pattern?: string` — extraction hint. Named type (`'email'`, `'date'`, `'orderId'`) or template (`'order {paramName}'` extracts token after "order")
+- `example?: string` — concrete example shown to LLM during param extraction (e.g. `'ORD-12345'`)
+- `enum?: string[]` — allowed values when `type === 'enum'`
+
+**`Endpoint`** additional fields:
+- `idempotent?: boolean` — override default idempotency by method. GET/HEAD/OPTIONS default `true`; POST/PUT/PATCH/DELETE default `false`. Set `true` on a POST with an idempotency key to allow retries
+- `idempotencyKey?: string` — param name whose value is sent as `Idempotency-Key` header automatically
+
+**`Manifest`** additional fields:
+- `schemaVersion: string` — manifest format version, independent of package version. `'1'` = v0.6+ schema. Manifests without this field are pre-v0.6; engine warns but continues
+- `tagRegistry?: Record<string, { description: string }>` — optional documentation for tags used in capabilities. Not required for tags to work
+- `info?: ManifestInfo` — title, description, version, homepage, contact, license — documentation and provenance only, not used at runtime
+- `servers?: Server[]` — multi-environment server definitions. Engine selects `baseUrl` by matching `environment` option, falls back to first server, then `EngineOptions.baseUrl`
+
+**`Server`**:
+```typescript
+{ url: string, description?: string, environment?: 'production' | 'staging' | 'development' | string }
+```
+
+**`ManifestInfo`**:
+```typescript
+{ title?, description?, version?, homepage?, contact?: { name?, email?, url? }, license?: { name, url? } }
+```
+
+**`Capability.tags?: string[]`** — grouping and filtering. Used with `EngineOptions.llmTagFilter` to narrow what the LLM sees during matching. BM25 always uses the full manifest.
+
+---
+
+### `src/engine.ts` — additions since original
+
+**`engine.health()`** → `Promise<EngineHealth>` — never throws. Catches all internal errors and returns `status: 'unhealthy'` if any field fails to populate.
+
+**`engine.explain()`** — added to original map but details were missing:
+- Does not write to cache or learning store
+- Shares LLM quota with `ask()` — counts against the same rate limit and circuit breaker
+- Returns `ExplainResult.wouldExecute.blocked` — non-null string if privacy would block execution
+- Returns `ExplainResult.candidates` with per-candidate `explanation` string (human-readable scoring reason)
+
+**`EngineOptions` additions not in original map:**
+- `llmWithMessages?: (messages: LLMMessage[]) => Promise<string>` — structured system/user message interface. Preferred over `llm` when both supplied. Sends capability context as system message and user query as user message — stronger prompt injection resistance
+- `marginAwareLLM?: boolean` — when a match verdict is `'marginal'`, fires a targeted LLM call between only the top-2 candidates. Uses ~200 tokens vs ~4000 for full manifest — roughly 93% cost reduction. No effect in `cheap` mode or without an LLM (default: `false`)
+- `adaptiveMarginOverride?: number` — override the auto-calibrated margin threshold (0–100 points). Calibration runs at construction time: O(capabilities²), negligible for ≤100 capabilities
+- `embedding?: EmbeddingProvider` — pre-encodes all capability texts at construction. Cosine similarity scores fused with BM25 and fuzzy via RRF. Re-encodes after `loadManifest()`. Failures fall back to BM25+fuzzy gracefully. `health().embedding.ready` is `false` while encoding is in progress
+- `environment?: string` — selects server from `manifest.servers[]` by matching `server.environment`. Falls back to first server, then `baseUrl`
+- `llmTagFilter?: string[]` — restricts LLM top-3 candidate selection to capabilities with ALL of these tags. BM25 always uses full manifest. Falls back to full manifest with a warning if filter matches nothing
+- `bm25K1?: number` — TF saturation parameter (default: 1.5)
+- `bm25B?: number` — length normalization parameter (default: 0.75)
+- `cacheTtlMs?: number` — TTL for cache entries in milliseconds (default: no expiry)
+- `learningHalfLifeDays?: number` — half-life for time-decay in default `MemoryLearningStore` (default: 30). For `FileLearningStore`, pass `halfLifeDays` directly to its constructor
+- `llmCooldownMs?: number` — minimum ms between consecutive LLM calls (default: 0). Useful for free-tier models with burst limits
+- `llmCircuitBreakerThreshold?: number` — consecutive failures before circuit breaker opens (default: 3)
+- `llmCircuitBreakerResetMs?: number` — ms before retrying LLM after circuit opens (default: 60000)
+- `maxLLMCallsPerMinute?: number` — rate cap (default: 60). Set to `0` to disable LLM entirely. Slot reserved before call, refunded on hard failure
+
+**Manifest version check** (constructor + `loadManifest()`):
+- Missing `schemaVersion` → `console.warn` (always visible, bypasses log level)
+- `schemaVersion` mismatch → `console.warn`
+- Package version minor mismatch → `console.warn`
+
+**Adaptive margin calibration** (`calibrateAdaptiveMargin()`):
+- Runs at construction and after `loadManifest()`
+- Tests each capability's examples against all others to find typical inter-capability score spread
+- Uses 25th percentile × 0.6, clamped to 10–30 points
+- Dense overlapping vocabulary → lower threshold; sparse → higher
+- For very large manifests (500+), pass `adaptiveMarginOverride` to skip
+
+---
+
+### `src/learning.ts` — additions since original
+
+**Time decay** — exponential decay applied lazily on `getStats()` read. Formula: `weight × 0.5^(ageDays / halfLifeDays)`. Entries with negligible decayed weight (< 0.001) are excluded from the returned index — prevents ghost entries accumulating.
+
+**`lastUpdated` field on `LearningEntry`** — Unix timestamp (ms) when the (word, capabilityId) cell was last reinforced. Migration guard: pre-v0.7 entries missing this field use the file's mtime as a conservative fallback, preventing cliff-edge decay on first upgrade.
+
+**`LearningIndex` internal class** — shared by `FileLearningStore` and `MemoryLearningStore`. Maintains `index`, `lastUpdatedIndex` (for decay), and `statsCounter`. `getStats()` applies decay lazily per read. `rebuild()` replays all entries from scratch. Eliminates ~80 lines of duplicated index management.
+
+**PII safety** — `FileLearningStore.record()` tokenizes the query before persisting. Raw query text (which may contain emails, names, order IDs) never touches disk. `MemoryLearningStore` does the same for consistency.
+
+**`destroy()` on `LearningStore` interface** — async, awaits final flush, removes store from module-level `activeStores` registry, and calls `unregisterExitHandlers()` if no stores remain. `MemoryLearningStore.destroy()` is a no-op.
+
+---
+
+### `src/cache.ts` — additions since original
+
+**`ComboCache`** — memory-first, file-fallback. `get()` checks memory first; on miss, checks file and promotes to memory. `set()` writes both simultaneously via `Promise.all`. `size()` returns file-side count only (memory may have additional promoted entries not reflected).
+
+**`scheduleSave()` / debounced save** — both `FileCache` and `FileLearningStore` batch rapid writes into a single flush via `setTimeout(5000)`. Prevents a full file rewrite per request during cold-start with a stale cache (many TTL-expired entries read in quick succession).
+
+**`FileCache` security** — constructor validates that the resolved path starts with `cwd + path.sep`. Throws on path traversal attempts (e.g. `../../etc/passwd`).
+
+**`buildCacheKey()`** — semantic key: `cap:{capabilityId}:{k=v&k=v}`. Engine writes under both `normalizeQuery(query)` and `buildCacheKey()` — differently-phrased queries resolving to the same capability and params share a cache entry. `capKey` always starts with `'cap:'`, structurally distinct from `queryKey`.
+
+---
+
+### `src/resolver.ts` — additions since original
+
+**`ResolveOptions.retryAllMethods?: boolean`** — when `true`, retries POST/PUT/PATCH/DELETE on failure in addition to the safe methods. Use only with idempotent write operations.
+
+**`ResolveOptions.fetch?: typeof globalThis.fetch`** — custom fetch implementation. Allows using `node-fetch`, undici, or a mock in tests without environment patching.
+
+**`ResolveOptions.timeoutMs?: number`** — per-request timeout via `AbortController` (default: 5000ms).
+
+**Idempotency-Key injection** — when `Endpoint.idempotencyKey` is set and the param is available in the resolved params, the header `Idempotency-Key: <value>` is injected automatically before the request.
+
+**`resolution.partialSuccess`** — populated when multiple endpoints are configured and at least one succeeded while at least one failed. Contains `completedCalls` and `failedCalls`. Undefined when all succeeded, all failed, or on `dryRun`.
+
+---
+
+### `src/matcher.ts` — additions since original
+
+**`TYPE_PATTERNS`** — exported map of `ParamType` → `RegExp`. Used by `extractParams()` for typed params (`email`, `date`, `url`). Available for consumers who need direct regex access.
+
+**`filterByTags(manifest, tags)`** — exported. Returns a new manifest containing only capabilities that have ALL of the specified tags. Used internally by `_runMatch()` when `llmTagFilter` is set. Available for consumers building custom pipelines.
+
+**`LLMMessage`** type — `{ role: 'system' | 'user', content: string }`. Used with `llmWithMessages` interface.
+
+**BM25 index** (`buildBM25Index`, `scoreCapability`, `calibrateCeiling`):
+- Index built at engine construction and on `loadManifest()` — not rebuilt per query
+- `calibrateCeiling()` runs each capability's examples through BM25 to find the realistic max score, used to normalize to 0–100
+- `sanitizeForPrompt(text, maxLen)` — strips newlines and control characters before injecting into LLM prompts. Applied to capability descriptions and `manifest.app`
+
+**`STOPWORDS`** — exported set. Words in this set are excluded from BM25 scoring and the learning keyword index.

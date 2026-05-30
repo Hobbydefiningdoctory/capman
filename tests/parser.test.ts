@@ -185,7 +185,7 @@ describe('parseOpenAPI()', () => {
     }
   })
 
-  it('skips operations with insufficient info', async () => {
+  it('synthesizes capabilities with insufficient info instead of skipping', async () => {
     const fs = require('fs')
     const path = require('path')
     const tmp = path.join(process.cwd(), 'tmp-test-spec.json')
@@ -193,10 +193,15 @@ describe('parseOpenAPI()', () => {
 
     try {
       const result = await parseOpenAPI(tmp)
-      // /health GET has summary 'x' (< 5 chars) so should be skipped
+      // /health GET has summary 'x' (< 5 chars) — old code skipped it,
+      // new code synthesizes a description and keeps the capability.
       const ids = result.config.capabilities.map(c => c.id)
       const hasHealth = ids.some(id => id.includes('health'))
-      expect(hasHealth).toBe(false)
+      expect(hasHealth).toBe(true)
+      // Synthesized capability is flagged so the developer knows to review it
+      expect(result.stats.autoSynthesized).toBeGreaterThan(0)
+      // Nothing should be hard-skipped — zero capabilities truly lost
+      expect(result.stats.skipped).toBe(0)
     } finally {
       fs.unlinkSync(tmp)
     }

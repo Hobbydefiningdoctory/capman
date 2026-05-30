@@ -316,7 +316,7 @@ async function resolveApi(
       c => typeof c.status === 'number' && c.status >= 200 && c.status < 300
     )
     const failed = enrichedCalls.filter(
-      c => !c.status || c.status < 200 || c.status >= 300
+      c => typeof c.status === 'number' && (c.status === 0 || c.status < 200 || c.status >= 300)
     )
 
     // Partial success — at least one endpoint ran and at least one failed.

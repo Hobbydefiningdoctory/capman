@@ -1152,7 +1152,7 @@ export class CapmanEngine {
           return filtered
         })()
 
-    switch (this.mode) {
+          switch (this.mode) {
       case 'cheap': {
         const t = Date.now()
         matchResult = _match(query, this.manifest)
@@ -1532,19 +1532,19 @@ export class CapmanEngine {
         return matchResult
       }
 
-      const prompt = `Two capabilities are close matches for this query. Pick the best one.
+        const prompt = `Two capabilities are close matches for this query. Pick the best one.\n\n  Option A: ${capA.id} — ${sanitizeForPrompt(capA.description, 150)}\n  Option B: ${capB.id} — ${sanitizeForPrompt(capB.description, 150)}\n\n  Respond ONLY with valid JSON:\n  { \"winner\": \"<capability_id>\", \"confidence\": <0-100>, \"reasoning\": \"<one sentence>\" }\n\n---USER_QUERY_START---\n${JSON.stringify({ user_query: query })}\n---USER_QUERY_END---`
 
-  Query: ${JSON.stringify({ user_query: query })}
+        const DISAMBIG_DELIMITER = '---USER_QUERY_START---'
+        const disambigIdx        = prompt.indexOf(DISAMBIG_DELIMITER)
 
-  Option A: ${capA.id} — ${sanitizeForPrompt(capA.description, 150)}
-  Option B: ${capB.id} — ${sanitizeForPrompt(capB.description, 150)}
-
-  Respond ONLY with valid JSON:
-  { "winner": "<capability_id>", "confidence": <0-100>, "reasoning": "<one sentence>" }`
-
-      const t = Date.now()
+        const t = Date.now()
       try {
-        const raw    = await this.llm(prompt)
+        const raw = this.llmWithMessages && disambigIdx !== -1
+            ? await this.llmWithMessages([
+                { role: 'system', content: prompt.slice(0, disambigIdx).trimEnd() },
+                { role: 'user',   content: prompt.slice(disambigIdx + DISAMBIG_DELIMITER.length).trim().replace(/\n---USER_QUERY_END---$/, '').trim() },
+              ])
+            : await this.llm(prompt)
         const clean  = raw.replace(/```json|```/g, '').trim()
         const parsed = JSON.parse(clean)
 

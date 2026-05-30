@@ -74,9 +74,10 @@ interface SecurityScheme {
 export interface ParseResult {
   config:    CapmanConfig
   stats: {
-    total:    number
-    skipped:  number
-    warnings: string[]
+    total:           number
+    skipped:         number   // truly unrecoverable — no method, no path (should be zero in practice)
+    autoSynthesized: number   // capabilities where description was missing and was synthesized from path + method
+    warnings:        string[]
   }
 }
 
@@ -166,7 +167,8 @@ function parseSpecText(text: string, source: string): OpenAPISpec {
 function convertSpec(spec: OpenAPISpec): ParseResult {
   const warnings: string[] = []
   const capabilities: Capability[] = []
-  let skipped = 0
+  let skipped         = 0
+  let autoSynthesized = 0
 
   // Determine base URL
   const baseUrl = extractBaseUrl(spec)
@@ -195,9 +197,21 @@ function convertSpec(spec: OpenAPISpec): ParseResult {
       const result = convertOperation(urlPath, method, op, hasGlobalAuth, securitySchemes)
 
       if (!result) {
+        // Truly unrecoverable — convertOperation only returns null when it
+        // cannot determine a method or path at all, which should never happen
+        // for a valid PathItem entry.
         skipped++
-        warnings.push(`Skipped ${method} ${urlPath} — no useful info to generate capability`)
+        warnings.push(`Skipped ${method} ${urlPath} — could not determine endpoint shape`)
         continue
+      }
+
+      if ((result as Capability & { _synthesized?: true })._synthesized) {
+        autoSynthesized++
+        warnings.push(
+          `Auto-synthesized: ${method} ${urlPath} — no description or summary found in spec. ` +
+          `Review "${result.id}" in capman.config.js and improve the description + examples.`
+        )
+        delete (result as Capability & { _synthesized?: true })._synthesized
       }
 
       // De-conflict duplicate IDs — loop until the candidate ID is unique.
@@ -231,6 +245,7 @@ function convertSpec(spec: OpenAPISpec): ParseResult {
     stats: {
       total:    capabilities.length,
       skipped,
+      autoSynthesized,
       warnings,
     },
   }
@@ -250,11 +265,21 @@ function convertOperation(
     ? toSnakeCase(op.operationId)
     : pathToId(method, urlPath)
 
-  // Name and description
-  const name = op.summary ?? toHumanName(id)
-  const description = op.description ?? op.summary ?? `${method} ${urlPath}`
+  // Name and description.
+  // Use || instead of ?? so empty strings ("") fall through to the next
+  // option — ?? only catches null/undefined, and many auto-generated specs
+  // set description/summary to "" rather than omitting them entirely.
+  const rawDescription = (op.description || op.summary || '').trim()
+  const rawName        = (op.summary || op.description || '').trim()
 
-  if (description.length < 5) return null
+  // If there is genuinely no human-written description, synthesize one from
+  // the path + method + tags. The capability is still generated — it just
+  // gets flagged so the developer knows to review it.
+  const synthesized = rawDescription.length < 5
+  const description = synthesized
+    ? synthesizeDescription(method, urlPath, op)
+    : rawDescription
+  const name = rawName.length >= 2 ? rawName : toHumanName(id)
 
   // Extract params
   const params = extractParams(op)
@@ -268,7 +293,7 @@ function convertOperation(
   // Build returns from response descriptions
   const returns = inferReturns(op, urlPath)
 
-  return {
+  const capability = {
     id,
     name,
     description,
@@ -276,11 +301,153 @@ function convertOperation(
     params,
     returns,
     resolver: {
-      type: 'api',
+      type: 'api' as const,
       endpoints: [{ method, path: urlPath }],
     },
     privacy: { level: privacyLevel },
+    ...(synthesized ? { _synthesized: true as const } : {}),
   }
+
+  return capability as Capability
+}
+
+// ─── Synthesize description from path + method when spec has none ─────────────
+//
+// Called only when op.description and op.summary are both absent or too short
+// (< 5 chars). Produces a readable sentence good enough for BM25 keyword
+// matching and clearly signals to the developer that it needs review.
+//
+// Handles three path shapes:
+//
+//   Shape 1 — collection endpoint
+//     GET  /v1/orders              → "List orders"
+//     POST /v1/orders              → "Create order"
+//
+//   Shape 2 — singleton sub-resource (no trailing param but embedded in a
+//   nested path, e.g. one discount per customer)
+//     GET  /v1/customers/{id}/discount   → "Get customer discount"
+//
+//   Shape 3 — action verb as last segment (common in Stripe/Twilio/GitHub APIs)
+//     POST /v1/charges/{id}/dispute/close  → "Close dispute"
+//     POST /v1/application_fees/{id}/refund → "Refund application fee"
+//
+//   Shape 4 — plain singleton
+//     GET    /v1/orders/{id}        → "Get order by id"
+//     PUT    /v1/orders/{id}        → "Update order"
+//     DELETE /v1/orders/{id}        → "Delete order"
+
+/** Path segment words that are REST action verbs, not resource nouns. */
+const ACTION_VERBS = new Set([
+  'close', 'cancel', 'confirm', 'capture', 'send', 'submit', 'activate',
+  'deactivate', 'approve', 'reject', 'archive', 'restore', 'pause', 'resume',
+  'retry', 'void', 'expire', 'release', 'refund', 'transfer', 'verify',
+  'validate', 'publish', 'unpublish', 'lock', 'unlock', 'revoke', 'finalize',
+  'complete', 'checkout', 'apply', 'attach', 'detach', 'preview', 'reactivate',
+  'redact', 'migrate', 'reset', 'rotate', 'revoke', 'disable', 'enable',
+])
+
+/** Version-like path prefixes that should not be treated as resource names. */
+const VERSION_PREFIX_RE = /^v\d+$/i  // v1, v2, v3 …
+
+function synthesizeDescription(
+  method:  HttpMethod,
+  urlPath: string,
+  op:      Operation,
+): string {
+  const segments = urlPath.split('/').filter(Boolean)
+
+  // Strip version prefixes (v1, v2 …) — they are routing, not resource names
+  const meaningful = segments.filter(s => !VERSION_PREFIX_RE.test(s))
+
+  const isParam    = (s: string) => s.startsWith('{')
+  const resources  = meaningful.filter(s => !isParam(s))
+  const params     = meaningful.filter(s =>  isParam(s))
+
+  const lastSeg = meaningful[meaningful.length - 1] ?? ''
+
+  // ── Shape 3: action verb as final segment ────────────────────────────────
+  // e.g. POST /charges/{id}/dispute/close  → "Close dispute"
+  //      POST /application_fees/{id}/refund → "Refund application fee"
+  if (ACTION_VERBS.has(lastSeg)) {
+    // Parent resource: the last non-param, non-verb segment before the verb
+    const parentRaw = resources[resources.length - 2]   // e.g. "dispute"
+      ?? resources[resources.length - 1]                // fallback
+      ?? 'resource'
+    const parent    = singularize(parentRaw.replace(/-|_/g, ' '))
+    const verb      = capitalize(lastSeg)
+    return `${verb} ${parent}`
+  }
+
+  // ── Remaining shapes: primary resource is last non-param segment ─────────
+  const primaryRaw  = resources[resources.length - 1] ?? op.tags?.[0] ?? 'resource'
+  const primary     = primaryRaw.replace(/-/g, ' ')
+
+  // Secondary resource: the non-param segment one level up (for nested paths)
+  const secondaryRaw = resources[resources.length - 2]
+  const secondary    = secondaryRaw ? secondaryRaw.replace(/-/g, ' ') : null
+
+  const endsWithParam = isParam(meaningful[meaningful.length - 1] ?? '')
+
+  // "by <param>" suffix helps param extraction for GET-by-id operations
+  const paramSuffix = (params.length > 0 && method === 'GET' && endsWithParam)
+    ? ` by ${params[params.length - 1].slice(1, -1).replace(/_/g, ' ')}`
+    : ''
+
+  // Singleton nested resource (e.g. one discount per customer):
+  // path ends with a plain word AND there are parent params → "Get X Y"
+  // where X = singularized parent, Y = primary
+  // Distinguish from a true collection: primary ends in 's'/'ies' → List
+  const isCollection = primary.endsWith('s') && !endsWithParam && params.length > 0
+  const nestedParent = (secondary !== null && params.length > 0 && !endsWithParam)
+    ? singularize(secondary)
+    : null
+
+  switch (method) {
+    case 'GET': {
+      if (endsWithParam) {
+        // Shape 4 — singleton by id: "Get order by id"
+        return `Get ${singularize(primary)}${paramSuffix}`
+      }
+      if (nestedParent && !isCollection) {
+        // Shape 2 — singleton sub-resource: "Get customer discount"
+        return `Get ${nestedParent} ${primary}`
+      }
+      if (nestedParent && isCollection) {
+        // Shape 2 — sub-collection: "List orders for customer"
+        return `List ${primary} for ${nestedParent}`
+      }
+      // Shape 1 — top-level collection: "List orders"
+      return `List ${primary}`
+    }
+
+    case 'POST':
+      return `Create ${singularize(primary)}`
+
+    case 'PUT':
+    case 'PATCH': {
+      const target = nestedParent
+        ? `${nestedParent} ${primary}`
+        : singularize(primary)
+      return `Update ${target}`
+    }
+
+    case 'DELETE':
+      return `Delete ${singularize(primary)}`
+
+    default:
+      return `${method} ${primary}`
+  }
+}
+
+function singularize(word: string): string {
+  if (word.endsWith('ies') && word.length > 4)           return word.slice(0, -3) + 'y'
+  if (word.endsWith('ses') || word.endsWith('xes'))      return word.slice(0, -2)
+  if (word.endsWith('s') && !word.endsWith('ss') && word.length > 3) return word.slice(0, -1)
+  return word
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 // ─── Extract params from operation ───────────────────────────────────────────
