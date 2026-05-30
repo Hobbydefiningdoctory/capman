@@ -11,11 +11,47 @@ export function generate(config: CapmanConfig): Manifest {
     version:       VERSION,
     app:           config.app,
     generatedAt:   new Date().toISOString(),
-    capabilities:  config.capabilities.map(cap => ({ ...cap })),
+    capabilities:  config.capabilities.map(sanitizeCap),
     ...(config.info ? { info: config.info } : {}),
     ...(config.tagRegistry ? { tagRegistry: config.tagRegistry } : {}),
     ...(config.servers     ? { servers:     config.servers     } : {}),
   }
+}
+
+/**
+ * Enforce schema length limits on a capability before it enters the manifest.
+ * Descriptions from imported OpenAPI specs (e.g. Stripe) can exceed 2000 chars;
+ * the manifest schema requires ≤500 for descriptions and ≤200 for examples.
+ * Truncating here means every code path — CLI, programmatic API, config reload —
+ * always produces a manifest that passes `validate()` out of the box.
+ */
+function sanitizeCap(cap: CapmanConfig['capabilities'][number]): CapmanConfig['capabilities'][number] {
+  return {
+    ...cap,
+    description: truncate(cap.description, 500),
+    ...(cap.examples ? { examples: cap.examples.map(e => truncate(e, 200)) } : {}),
+  }
+}
+
+/**
+ * Truncate text to at most `max` characters, preferring a sentence boundary,
+ * then a word boundary, appending `…` when truncation occurs.
+ */
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text
+
+  // Try to cut at the last sentence boundary (., !, ?) within the budget,
+  // but only if it keeps at least half the budget (avoids cutting too early)
+  const window = text.slice(0, max)
+  const sentenceCut = window.search(/[.!?][^.!?]*$/)
+  if (sentenceCut > max * 0.5) return text.slice(0, sentenceCut + 1).trimEnd()
+
+  // Fall back to the last word boundary
+  const wordCut = window.slice(0, max - 1).lastIndexOf(' ')
+  if (wordCut > 0) return text.slice(0, wordCut).trimEnd() + '…'
+
+  // Last resort: hard cut
+  return text.slice(0, max - 1) + '…'
 }
 
 export function loadConfig(configPath?: string): CapmanConfig {

@@ -276,9 +276,10 @@ function convertOperation(
   // the path + method + tags. The capability is still generated — it just
   // gets flagged so the developer knows to review it.
   const synthesized = rawDescription.length < 5
-  const description = synthesized
-    ? synthesizeDescription(method, urlPath, op)
-    : rawDescription
+  const description = truncate(
+    synthesized ? synthesizeDescription(method, urlPath, op) : rawDescription,
+    500
+  )
   const name = rawName.length >= 2 ? rawName : toHumanName(id)
 
   // Extract params
@@ -540,19 +541,21 @@ function generateExamples(
   const examples: string[] = []
 
   // Primary example from name
-  examples.push(name)
+  examples.push(truncate(name, 200))
 
-  // Variation from description (first sentence, truncated)
+  // Variation from description (first sentence only — descriptions can be
+  // multi-paragraph in enterprise specs; only the first sentence is useful
+  // as a natural-language example phrasing)
   const firstSentence = description.split(/[.!?]/)[0].trim()
   if (firstSentence && firstSentence !== name && firstSentence.length < 80) {
-    examples.push(firstSentence)
+    examples.push(truncate(firstSentence, 200))
   }
 
   // Param-based example
   const required = params.filter(p => p.required && p.source === 'user_query')
   if (required.length > 0) {
     const paramNames = required.map(p => p.name.replace(/_/g, ' ')).join(' and ')
-    examples.push(`${name} by ${paramNames}`)
+    examples.push(truncate(`${name} by ${paramNames}`, 200))
   }
 
   return examples.slice(0, 3)
@@ -625,4 +628,32 @@ function pathToId(method: HttpMethod, urlPath: string): string {
     method === 'DELETE' ? 'delete' : 'call'
 
   return toSnakeCase(`${prefix}_${segments}`)
+}
+
+/**
+ * Truncate a string to at most `max` characters, cutting at the last sentence
+ * boundary (`.`, `!`, `?`) within the limit, then at the last word boundary,
+ * and appending `…` when truncation occurs.
+ *
+ * Used to ensure descriptions (≤500) and examples (≤200) always satisfy
+ * the schema limits even when importing from verbose enterprise API specs
+ * (e.g. Stripe descriptions can exceed 2000 characters).
+ */
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text
+
+  // Try to cut at the last sentence boundary before the limit
+  const sentenceCut = text.slice(0, max).search(/[.!?][^.!?]*$/)
+  if (sentenceCut > max * 0.5) {
+    // Only use sentence cut if it keeps at least half the budget — avoids
+    // cutting way too early on strings that start with a short first sentence
+    return text.slice(0, sentenceCut + 1).trimEnd()
+  }
+
+  // Fall back: cut at the last word boundary
+  const wordCut = text.slice(0, max - 1).lastIndexOf(' ')
+  if (wordCut > 0) return text.slice(0, wordCut).trimEnd() + '…'
+
+  // Last resort: hard cut (no spaces at all — e.g. a URL or long token)
+  return text.slice(0, max - 1) + '…'
 }

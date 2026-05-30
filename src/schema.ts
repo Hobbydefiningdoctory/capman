@@ -82,14 +82,18 @@ const CapabilityErrorSchema = z.object({
 
 // ─── Capability Schema ────────────────────────────────────────────────────────
 
-const CapabilitySchema = z.object({
+// Shared structural fields — no length limits.
+// Used for config validation where the user's source-of-truth may contain
+// verbose descriptions from imported OpenAPI specs (e.g. Stripe descriptions
+// can exceed 2000 chars). The generator's sanitizeCap() enforces limits before
+// the data reaches the manifest.
+const CapabilityBaseSchema = z.object({
   id:          z.string().min(1, 'capability id is required')
                .regex(/^[a-z0-9_]+$/, 'id must be snake_case (lowercase, numbers, underscores only)'),
   name:        z.string().min(1, 'capability name is required'),
   description: z.string()
-  .min(10, 'description must be at least 10 characters for accurate matching')
-  .max(500, 'description must be 500 characters or fewer'),
-  examples:    z.array(z.string().max(200, 'each example must be 200 characters or fewer')).optional(),
+               .min(10, 'description must be at least 10 characters for accurate matching'),
+  examples:    z.array(z.string()).optional(),
   params:      z.array(CapabilityParamSchema),
   returns:     z.array(z.string()),
   resolver:    ResolverSchema,
@@ -98,6 +102,15 @@ const CapabilitySchema = z.object({
   tags:      z.array(z.string().min(1)).optional(),
   errors:    z.array(CapabilityErrorSchema).optional(),
   matchHint: MatchHintSchema.optional(),
+})
+
+// Manifest-level schema adds length limits — the manifest is the compiled output
+// consumed by the engine, where oversized strings degrade BM25 matching quality.
+const CapabilitySchema = CapabilityBaseSchema.extend({
+  description: z.string()
+               .min(10, 'description must be at least 10 characters for accurate matching')
+               .max(500, 'description must be 500 characters or fewer'),
+  examples:    z.array(z.string().max(200, 'each example must be 200 characters or fewer')).optional(),
 })
 
 const ServerSchema = z.object({
@@ -132,7 +145,7 @@ export const CapmanConfigSchema = z.object({
   info:         ManifestInfoSchema.optional(),
   servers:      z.array(ServerSchema).optional(),
   tagRegistry:  z.record(z.object({ description: z.string() })).optional(),
-  capabilities: z.array(CapabilitySchema)
+  capabilities: z.array(CapabilityBaseSchema)
     .min(1, 'at least one capability is required')
     .refine(
       caps => new Set(caps.map(c => c.id)).size === caps.length,
