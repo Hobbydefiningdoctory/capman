@@ -266,7 +266,7 @@ export interface CapmanConfig {
 export interface MatchResult {
   capability: Capability | null
   confidence: number
-  intent: 'navigation' | 'retrieval' | 'hybrid' | 'out_of_scope'
+  intent: 'navigation' | 'retrieval' | 'action' | 'hybrid' | 'out_of_scope'
   extractedParams: Record<string, string | null>
   reasoning: string
   /** All scored candidates — always present after match() */

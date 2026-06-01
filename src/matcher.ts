@@ -131,6 +131,7 @@ export function stem(word: string): string {
  */
 export function tokenize(text: string): string[] {
   return text
+    .replace(/([a-z])([A-Z])/g, '$1 $2')  // split camelCase before lowercasing: "PaymentIntent" → "Payment Intent"
     .toLowerCase()
     .split(/\W+/)
     .filter(w => w.length > 2 && !STOPWORDS.has(w))
@@ -347,9 +348,16 @@ function bigramBonus(queryBigrams: Set<string>, capBigrams: Set<string>): number
 
 export function resolverToIntent(cap: Capability): MatchResult['intent'] {
   const t = cap.resolver.type
-  if (t === 'api')    return 'retrieval'
   if (t === 'nav')    return 'navigation'
   if (t === 'hybrid') return 'hybrid'
+  if (t === 'api') {
+    // Read the HTTP method of the first endpoint — GET/HEAD are read-only
+    // retrievals; everything else (POST, PUT, PATCH, DELETE) is an action
+    // that mutates state. "close a dispute" is an action, not a retrieval.
+    const method = (cap.resolver as import('./types').ApiResolver).endpoints?.[0]?.method
+    if (!method || method === 'GET' || method === 'HEAD') return 'retrieval'
+    return 'action'
+  }
   return 'out_of_scope'
 }
 
@@ -541,12 +549,12 @@ export function calibrateCeiling(
 ): number {
   let max = 0
   for (const cap of capabilities) {
-    if (!cap.examples?.length) continue
-    for (const example of cap.examples) {
-      const selfWords = new Set(tokenize(example))
-      const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
-      if (raw > max) max = raw
-    }
+    // Calibrate from name + full description — longer text that better represents
+    // real query complexity. Short auto-generated examples (2-4 words) produce
+    // a low ceiling that clamps most real queries to 100%, destroying ranking.
+    const selfWords = new Set(tokenize(cap.name + ' ' + cap.description))
+    const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
+    if (raw > max) max = raw
   }
   return max > 0 ? max : 100
 }
@@ -647,7 +655,10 @@ export function match(
       const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
       const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
       const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
-      const keywordScore = Math.min(100, bm25Score + bonusPoints)
+      // Demote deprecated capabilities — still discoverable for informational queries
+      // ("what replaced post_charges?") but ranked last vs active alternatives.
+      const depPenalty   = cap.lifecycle?.status === 'deprecated' ? 0.3 : 1
+      const keywordScore = Math.min(100, Math.round((bm25Score + bonusPoints) * depPenalty))
       const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
       const embScore     = options.embeddingScores?.get(cap.id) ?? 0
       if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
@@ -801,7 +812,7 @@ Respond ONLY in valid JSON (no markdown, no explanation):
 {
   "matched_capability": "<capability_id or OUT_OF_SCOPE>",
   "confidence": <0-100>,
-  "intent": "<navigation|retrieval|hybrid|out_of_scope>",
+  "intent": "<navigation|retrieval|action|hybrid|out_of_scope>",
   "reasoning": "<one sentence>",
   "extracted_params": { "<param_name>": "<value or null>" }
 }

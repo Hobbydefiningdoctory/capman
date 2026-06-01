@@ -269,18 +269,31 @@ function convertOperation(
   // Use || instead of ?? so empty strings ("") fall through to the next
   // option — ?? only catches null/undefined, and many auto-generated specs
   // set description/summary to "" rather than omitting them entirely.
-  const rawDescription = (op.description || op.summary || '').trim()
-  const rawName        = (op.summary || op.description || '').trim()
+  // Strip HTML before any further processing — Stripe and many enterprise specs
+  // embed HTML in description/summary fields. Raw tags pollute examples and
+  // prevent clean deprecation detection ("<p>This method is no longer …").
+  const rawDescription = stripHTML((op.description || op.summary || '').trim())
+  const rawName        = stripHTML((op.summary || op.description || '').trim())
 
-  // If there is genuinely no human-written description, synthesize one from
-  // the path + method + tags. The capability is still generated — it just
-  // gets flagged so the developer knows to review it.
-  const synthesized = rawDescription.length < 5
+  // Detect endpoints whose description is nothing but a deprecation notice.
+  // Stripe/Twilio do this: no summary, description = "This method is no longer
+  // recommended—use the Payment Intents API...". That text becomes examples and
+  // poisons BM25: every query about Payment Intents matches the deprecated charges
+  // endpoint. Replace it with a clean synthesized description and mark lifecycle.
+  const DEPRECATION_RE = /\b(deprecated|no longer recommended|not recommended|use .{0,60} instead|this method (is|has been) deprecated|this endpoint (is|has been) deprecated)\b/i
+  const isDeprecated = DEPRECATION_RE.test(rawDescription)
+
+  // If there is genuinely no human-written description, OR if the only content
+  // is a deprecation notice, synthesize from the path + method + tags.
+  const synthesized = rawDescription.length < 5 || isDeprecated
   const description = truncate(
     synthesized ? synthesizeDescription(method, urlPath, op) : rawDescription,
     500
   )
-  const name = rawName.length >= 2 ? rawName : toHumanName(id)
+  // When the rawName is also the deprecation notice (no real summary field),
+  // derive a clean name from the path rather than indexing the notice.
+  const nameIsNotice = isDeprecated && DEPRECATION_RE.test(rawName)
+  const name = (!nameIsNotice && rawName.length >= 2) ? rawName : toHumanName(id)
 
   // Extract params
   const params = extractParams(op)
@@ -288,8 +301,8 @@ function convertOperation(
   // Determine privacy scope
   const privacyLevel = inferPrivacy(op, hasGlobalAuth, securitySchemes)
 
-  // Build examples from path pattern
-  const examples = generateExamples(name, description, params)
+  // Build examples from path pattern, method, and endpoint shape
+  const examples = generateExamples(name, description, params, method, urlPath)
 
   // Build returns from response descriptions
   const returns = inferReturns(op, urlPath)
@@ -306,7 +319,8 @@ function convertOperation(
       endpoints: [{ method, path: urlPath }],
     },
     privacy: { level: privacyLevel },
-    ...(synthesized ? { _synthesized: true as const } : {}),
+    ...(isDeprecated ? { lifecycle: { status: 'deprecated' as const } } : {}),
+    ...(synthesized && !isDeprecated ? { _synthesized: true as const } : {}),
   }
 
   return capability as Capability
@@ -536,7 +550,9 @@ function inferPrivacy(
 function generateExamples(
   name:        string,
   description: string,
-  params:      CapabilityParam[]
+  params:      CapabilityParam[],
+  method:      HttpMethod,
+  urlPath:     string,
 ): string[] {
   const examples: string[] = []
 
@@ -558,7 +574,63 @@ function generateExamples(
     examples.push(truncate(`${name} by ${paramNames}`, 200))
   }
 
-  return examples.slice(0, 3)
+  // ── Method + path-shape synonyms ──────────────────────────────────────────
+  // GET /v1/resources        (list — no trailing {param}) → "list all", "search"
+  // GET /v1/resources/{id}   (by-id — trailing {param})   → "retrieve", "fetch"
+  // POST                                                   → "create", "add"
+  // PUT/PATCH                                              → "update", "edit"
+  // DELETE                                                 → "delete", "remove"
+  //
+  // Extracting the resource noun from the path gives natural synonyms that BM25
+  // indexes independently from the name. Without these, a GET-list and GET-by-id
+  // endpoint for the same resource share 100% token overlap and become
+  // indistinguishable — both match "retrieve payment intent" equally well.
+  const segments = urlPath.split('/').filter(s => s && !s.startsWith('{') && !/^v\d+$/i.test(s))
+  const rawResource = segments[segments.length - 1] ?? ''
+  const resource    = rawResource.replace(/[-_]/g, ' ')
+  const singular    = resource ? singularize(resource) : ''
+
+  const pathEndsWithParam = /\{[^}]+\}\s*$/.test(urlPath.trimEnd())
+
+  if (method === 'GET') {
+    if (pathEndsWithParam) {
+      // By-id retrieval — add singular-focused fetch synonyms
+      if (singular) {
+        examples.push(truncate(`retrieve ${singular}`, 200))
+        examples.push(truncate(`fetch ${singular} by id`, 200))
+      }
+    } else {
+      // Collection listing — add plural-focused list/search synonyms
+      if (resource) {
+        examples.push(truncate(`list all ${resource}`, 200))
+        examples.push(truncate(`search ${resource}`, 200))
+      }
+    }
+  } else if (method === 'POST') {
+    if (singular) {
+      examples.push(truncate(`create ${singular}`, 200))
+      examples.push(truncate(`add new ${singular}`, 200))
+    }
+  } else if (method === 'PUT' || method === 'PATCH') {
+    if (singular) {
+      examples.push(truncate(`update ${singular}`, 200))
+      examples.push(truncate(`edit ${singular}`, 200))
+    }
+  } else if (method === 'DELETE') {
+    if (singular) {
+      examples.push(truncate(`delete ${singular}`, 200))
+      examples.push(truncate(`remove ${singular}`, 200))
+    }
+  }
+
+  // Deduplicate while preserving order, then cap at 5
+  const seen = new Set<string>()
+  return examples.filter(e => {
+    const key = e.toLowerCase().trim()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 5)
 }
 
 // ─── Infer returns ────────────────────────────────────────────────────────────
@@ -573,6 +645,25 @@ function inferReturns(op: Operation, urlPath: string): string[] {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Strips HTML tags and common entities from spec text.
+ * Enterprise specs (Stripe, Twilio, GitHub) embed HTML in description/summary.
+ * Must run before any text processing — raw tags poison BM25 examples and
+ * prevent deprecation detection ("<p>This method is no longer recommended…").
+ */
+function stripHTML(text: string): string {
+  return text
+    .replace(/<[^>]*>?/g, ' ')    // remove tags — `>?` also catches mid-string truncated tags
+    .replace(/&amp;/g,   '&')
+    .replace(/&lt;/g,    '<')
+    .replace(/&gt;/g,    '>')
+    .replace(/&quot;/g,  '"')
+    .replace(/&#039;/g,  "'")
+    .replace(/&[a-z]+;/gi, ' ')   // strip remaining named entities
+    .replace(/\s+/g,     ' ')
+    .trim()
+}
 
 function extractBaseUrl(spec: OpenAPISpec): string {
   // OpenAPI 3.x

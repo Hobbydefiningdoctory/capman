@@ -280,6 +280,102 @@ describe('match()', () => {
       // Note: single-pass stemmer — 'orders' → 'order', 'order' → 'ord'
       // Use -ing forms for symmetry tests since they reduce to the root in one pass
     })
+
+    it('tokenize splits camelCase before lowercasing (Bug 2)', () => {
+      // "PaymentIntent" must become two tokens — "payment" and "intent" —
+      // not one opaque "paymentintent" token that never matches a two-word query.
+      const tokens = tokenize('PaymentIntent')
+      expect(tokens).toContain('payment')
+      expect(tokens).toContain('intent')
+      expect(tokens).not.toContain('paymentintent')
+    })
+
+    it('tokenize splits multi-word camelCase correctly', () => {
+      const tokens = tokenize('CreatePaymentMethodRequest')
+      expect(tokens).toContain('payment')
+      expect(tokens).toContain('method')
+      // Verify the input was split into multiple tokens, not kept as one opaque blob
+      expect(tokens).not.toContain('createpaymentmethodrequest')
+    })
+  })
+
+  describe('intent classification (Bug 1)', () => {
+    it('GET api resolver → retrieval', () => {
+      const getManifest = generate({
+        app: 'test', capabilities: [{
+          id: 'get_orders', name: 'Get orders', description: 'List all orders.',
+          examples: ['get orders'], params: [], returns: ['orders'],
+          resolver: { type: 'api', endpoints: [{ method: 'GET', path: '/orders' }] },
+          privacy: { level: 'public' },
+        }],
+      })
+      const result = match('get orders', getManifest)
+      expect(result.intent).toBe('retrieval')
+    })
+
+    it('POST api resolver → action', () => {
+      const postManifest = generate({
+        app: 'test', capabilities: [{
+          id: 'create_order', name: 'Create order', description: 'Create a new order.',
+          examples: ['create order', 'place order', 'add new order'], params: [], returns: ['order'],
+          resolver: { type: 'api', endpoints: [{ method: 'POST', path: '/orders' }] },
+          privacy: { level: 'public' },
+        }],
+      })
+      const result = match('create order', postManifest)
+      expect(result.intent).toBe('action')
+    })
+
+    it('DELETE api resolver → action', () => {
+      const deleteManifest = generate({
+        app: 'test', capabilities: [{
+          id: 'delete_order', name: 'Delete order', description: 'Delete an order.',
+          examples: ['delete order', 'remove order'], params: [], returns: ['status'],
+          resolver: { type: 'api', endpoints: [{ method: 'DELETE', path: '/orders/{id}' }] },
+          privacy: { level: 'public' },
+        }],
+      })
+      const result = match('delete order', deleteManifest)
+      expect(result.intent).toBe('action')
+    })
+
+    it('nav resolver always → navigation', () => {
+      const result = match('Take me to dashboard', manifest)
+      expect(result.intent).toBe('navigation')
+    })
+  })
+
+  describe('deprecated capability scoring (Bug 6)', () => {
+    it('deprecated capability scores lower than an active equivalent', () => {
+      const mixedManifest = generate({
+        app: 'test', capabilities: [
+          {
+            id: 'post_charges',
+            name: 'Create charge',
+            description: 'Create a charge.',
+            examples: ['create charge', 'charge card', 'add charge'],
+            params: [], returns: ['charge'],
+            resolver: { type: 'api', endpoints: [{ method: 'POST', path: '/charges' }] },
+            privacy: { level: 'public' },
+            lifecycle: { status: 'deprecated' },
+          },
+          {
+            id: 'create_payment_intent',
+            name: 'Create payment intent',
+            description: 'Create a payment intent to collect payment.',
+            examples: ['create payment intent', 'charge card', 'add charge'],
+            params: [], returns: ['payment_intent'],
+            resolver: { type: 'api', endpoints: [{ method: 'POST', path: '/payment_intents' }] },
+            privacy: { level: 'public' },
+          },
+        ],
+      })
+      const result = match('add charge', mixedManifest)
+      const deprecated = result.candidates.find(c => c.capabilityId === 'post_charges')
+      const active     = result.candidates.find(c => c.capabilityId === 'create_payment_intent')
+      // Active alternative should outrank the deprecated capability
+      expect(active!.score).toBeGreaterThan(deprecated!.score)
+    })
   })
 
   describe('filterByTags', () => {

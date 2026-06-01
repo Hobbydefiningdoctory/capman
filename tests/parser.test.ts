@@ -219,6 +219,98 @@ describe('parseOpenAPI()', () => {
       .rejects.toThrow('resolves outside the working directory')
   })
 
+  it('marks deprecated endpoints with lifecycle.status = deprecated (Bug 3)', async () => {
+    const spec = {
+      openapi: '3.0.0',
+      info: { title: 'Test', version: '1.0.0' },
+      servers: [{ url: 'https://api.test.com' }],
+      paths: {
+        '/charges': {
+          post: {
+            operationId: 'createCharge',
+            // No summary — description is pure deprecation notice, just like Stripe
+            description: 'This method is no longer recommended—use the Payment Intents API for all new integrations.',
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+        '/payment_intents': {
+          post: {
+            operationId: 'createPaymentIntent',
+            summary: 'Create payment intent',
+            description: 'Creates a PaymentIntent object.',
+            responses: { '201': { description: 'Created' } },
+          },
+        },
+      },
+    }
+    const tmp = path.join(process.cwd(), 'tmp-deprecation-spec.json')
+    fs.writeFileSync(tmp, JSON.stringify(spec))
+    let result: Awaited<ReturnType<typeof parseOpenAPI>>
+    try {
+      result = await parseOpenAPI(tmp)
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+    const charge = result.config.capabilities.find(c => c.id === 'create_charge')
+    // Must be marked deprecated — not just silently indexed with poisoned text
+    expect(charge?.lifecycle?.status).toBe('deprecated')
+    // Description must NOT contain the deprecation notice — it poisons BM25
+    expect(charge?.description).not.toMatch(/no longer recommended/i)
+    expect(charge?.description).not.toMatch(/Payment Intents/i)
+    // Name must also be clean (not "This method is no longer recommended...")
+    expect(charge?.name).not.toMatch(/no longer recommended/i)
+    // Active endpoint must have no lifecycle
+    const pi = result.config.capabilities.find(c => c.id === 'create_payment_intent')
+    expect(pi?.lifecycle).toBeUndefined()
+  })
+
+  it('GET-list and GET-by-id generate different synonym examples (Bug 4)', async () => {
+    const spec = {
+      openapi: '3.0.0',
+      info: { title: 'Test', version: '1.0.0' },
+      servers: [{ url: 'https://api.test.com' }],
+      paths: {
+        '/payment_intents': {
+          get: {
+            operationId: 'listPaymentIntents',
+            summary: 'List payment intents',
+            description: 'Returns a list of PaymentIntents.',
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+        '/payment_intents/{intent}': {
+          get: {
+            operationId: 'getPaymentIntent',
+            summary: 'Retrieve payment intent',
+            description: 'Retrieves the details of a PaymentIntent.',
+            parameters: [
+              { name: 'intent', in: 'path', required: true, description: 'Payment intent ID' },
+            ],
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+    }
+    const tmp = path.join(process.cwd(), 'tmp-list-vs-byid-spec.json')
+    fs.writeFileSync(tmp, JSON.stringify(spec))
+    let result: Awaited<ReturnType<typeof parseOpenAPI>>
+    try {
+      result = await parseOpenAPI(tmp)
+    } finally {
+      fs.unlinkSync(tmp)
+    }
+    const list  = result.config.capabilities.find(c => c.id === 'list_payment_intents')
+    const byId  = result.config.capabilities.find(c => c.id === 'get_payment_intent')
+    // List endpoint must have "list" synonyms — not "retrieve"
+    const listExamples = (list?.examples ?? []).join(' ').toLowerCase()
+    expect(listExamples).toMatch(/list/)
+    // By-id endpoint must have "retrieve" synonyms — not "list all"
+    const byIdExamples = (byId?.examples ?? []).join(' ').toLowerCase()
+    expect(byIdExamples).toMatch(/retrieve/)
+    // The two synonym sets must not be identical
+    expect(list?.examples).not.toEqual(byId?.examples)
+  })
+
   it('does not classify manage/manager operations as admin', async () => {
     const spec = {
       openapi: '3.0.0',

@@ -19,17 +19,63 @@ export function generate(config: CapmanConfig): Manifest {
 }
 
 /**
+ * Strips HTML tags and common entities from text.
+ * Enterprise specs (Stripe, Twilio) embed HTML in description/summary fields.
+ * Raw tags poison BM25 examples and prevent clean deprecation detection.
+ */
+function stripHTML(text: string): string {
+  return text
+    .replace(/<[^>]*>?/g, ' ')     // remove tags — `>?` also catches mid-string truncated tags
+    .replace(/&amp;/g,   '&')
+    .replace(/&lt;/g,    '<')
+    .replace(/&gt;/g,    '>')
+    .replace(/&quot;/g,  '"')
+    .replace(/&#039;/g,  "'")
+    .replace(/&[a-z]+;/gi, ' ')    // strip remaining named entities
+    .replace(/\s+/g,     ' ')
+    .trim()
+}
+
+// Detects deprecation notices embedded in raw descriptions/names.
+// Used in both parser.ts (at parse time) and sanitizeCap (at generate time)
+// so existing pre-baked configs are also cleaned without a full re-parse.
+const DEPRECATION_RE = /\b(deprecated|no longer recommended|not recommended|use .{0,60} instead|this method (is|has been) deprecated|this endpoint (is|has been) deprecated)\b/i
+
+/**
+ * Derives a clean human-readable capability name from a snake_case id.
+ * Used when the original name is a deprecation notice.
+ * e.g. "post_charges" → "Post Charges"
+ */
+function idToHumanName(id: string): string {
+  return id.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+/**
  * Enforce schema length limits on a capability before it enters the manifest.
- * Descriptions from imported OpenAPI specs (e.g. Stripe) can exceed 2000 chars;
- * the manifest schema requires ≤500 for descriptions and ≤200 for examples.
- * Truncating here means every code path — CLI, programmatic API, config reload —
- * always produces a manifest that passes `validate()` out of the box.
+ * Also strips HTML and detects deprecation notices — cleans up existing configs
+ * that were generated before the parser had these fixes, without requiring
+ * a full re-parse.
  */
 function sanitizeCap(cap: CapmanConfig['capabilities'][number]): CapmanConfig['capabilities'][number] {
+  const cleanName = stripHTML(cap.name)
+  const cleanDesc = stripHTML(cap.description)
+
+  // Detect if the name or description IS a deprecation notice (not a real name)
+  const isDeprecated   = DEPRECATION_RE.test(cleanDesc) || DEPRECATION_RE.test(cleanName)
+  const nameIsNotice   = isDeprecated && DEPRECATION_RE.test(cleanName)
+  // Preserve explicit lifecycle from config; auto-detect only when absent
+  const lifecycle      = cap.lifecycle ?? (isDeprecated ? { status: 'deprecated' as const } : undefined)
+
   return {
     ...cap,
-    description: truncate(cap.description, 500),
-    ...(cap.examples ? { examples: cap.examples.map(e => truncate(e, 200)) } : {}),
+    name:        nameIsNotice ? idToHumanName(cap.id) : truncate(cleanName, 200),
+    description: truncate(isDeprecated && DEPRECATION_RE.test(cleanDesc)
+      ? idToHumanName(cap.id)
+      : cleanDesc, 500),
+    ...(cap.examples
+      ? { examples: cap.examples.map(e => truncate(stripHTML(e), 200)) }
+      : {}),
+    ...(lifecycle ? { lifecycle } : {}),
   }
 }
 

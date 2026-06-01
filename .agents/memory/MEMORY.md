@@ -1,0 +1,1 @@
+- [Matching bugs and fixes](matching-bugs.md) — 8 root-cause fixes to matcher.ts, parser.ts, generator.ts covering intent, tokenization, ceiling, deprecated, HTML

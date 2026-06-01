@@ -143,9 +143,9 @@
     {
       "id": "post_accounts",
       "name": "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>",
-      "description": "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>",
+      "description": "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.",
       "examples": [
-        "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe.com/account/applications/settings\">register your platform</a>.</p>\n\n<p>If you’ve already collected information for your connected accounts, you <a href=\"/docs/connect/best-practices#onboarding\">can prefill that information</a> when\ncreating the account. Connect Onboarding won’t ask for the prefilled information during account onboarding.\nYou can prefill any information on the account.</p>"
+        "<p>With <a href=\"/docs/connect\">Connect</a>, you can create Stripe accounts for your users.\nTo do this, you’ll first need to <a href=\"https://dashboard.stripe."
       ],
       "params": [],
       "returns": [
@@ -206,7 +206,7 @@
     {
       "id": "post_accounts_account",
       "name": "Update an account",
-      "description": "<p>Updates a <a href=\"/connect/accounts\">connected account</a> by setting the values of the parameters passed. Any parameters not provided are\nleft unchanged.</p>\n\n<p>For accounts where <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">controller.requirement_collection</a>\nis <code>application</code>, which includes Custom accounts, you can update any information on the account.</p>\n\n<p>For accounts where <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">controller.requirement_collection</a>\nis <code>stripe</code>, which includes Standard and Express accounts, you can update all information until you create\nan <a href=\"/api/account_links\">Account Link</a> or <a href=\"/api/account_sessions\">Account Session</a> to start Connect onboarding,\nafter which some properties can no longer be updated.</p>\n\n<p>To update your own account, use the <a href=\"https://dashboard.stripe.com/settings/account\">Dashboard</a>. Refer to our\n<a href=\"/docs/connect/updating-accounts\">Connect</a> documentation to learn more about updating accounts.</p>",
+      "description": "<p>Updates a <a href=\"/connect/accounts\">connected account</a> by setting the values of the parameters passed. Any parameters not provided are\nleft unchanged.</p>\n\n<p>For accounts where <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">controller.requirement_collection</a>\nis <code>application</code>, which includes Custom accounts, you can update any information on the account.",
       "examples": [
         "Update an account",
         "Update an account by account"
@@ -238,7 +238,7 @@
     {
       "id": "delete_accounts_account",
       "name": "Delete an account",
-      "description": "<p>With <a href=\"/connect\">Connect</a>, you can delete accounts you manage.</p>\n\n<p>Test-mode accounts can be deleted at any time.</p>\n\n<p>Live-mode accounts that have access to the standard dashboard and Stripe is responsible for negative account balances cannot be deleted, which includes Standard accounts. All other Live-mode accounts, can be deleted when all <a href=\"/api/balance/balance_object\">balances</a> are zero.</p>\n\n<p>If you want to delete your own account, use the <a href=\"https://dashboard.stripe.com/settings/account\">account information tab in your account settings</a> instead.</p>",
+      "description": "<p>With <a href=\"/connect\">Connect</a>, you can delete accounts you manage.</p>\n\n<p>Test-mode accounts can be deleted at any time.</p>\n\n<p>Live-mode accounts that have access to the standard dashboard and Stripe is responsible for negative account balances cannot be deleted, which includes Standard accounts. All other Live-mode accounts, can be deleted when all <a href=\"/api/balance/balance_object\">balances</a> are zero.",
       "examples": [
         "Delete an account",
         "<p>With <a href=\"/connect\">Connect</a>, you can delete accounts you manage",
@@ -349,10 +349,10 @@
     {
       "id": "post_accounts_account_bank_accounts_id",
       "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.",
       "examples": [
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by account and id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency.",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency."
       ],
       "params": [
         {
@@ -690,10 +690,10 @@
     {
       "id": "post_accounts_account_external_accounts_id",
       "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.",
       "examples": [
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by account and id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency.",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency."
       ],
       "params": [
         {
@@ -1696,7 +1696,7 @@
     {
       "id": "post_application_fees_id_refunds",
       "name": "Create an application fee refund",
-      "description": "<p>Refunds an application fee that has previously been collected but not yet refunded.\nFunds will be refunded to the Stripe account from which the fee was originally collected.</p>\n\n<p>You can optionally refund only part of an application fee.\nYou can do so multiple times, until the entire fee has been refunded.</p>\n\n<p>Once entirely refunded, an application fee can’t be refunded again.\nThis method will raise an error when called on an already-refunded application fee,\nor when trying to refund more money than is left on an application fee.</p>",
+      "description": "<p>Refunds an application fee that has previously been collected but not yet refunded.\nFunds will be refunded to the Stripe account from which the fee was originally collected.</p>\n\n<p>You can optionally refund only part of an application fee.\nYou can do so multiple times, until the entire fee has been refunded.</p>\n\n<p>Once entirely refunded, an application fee can’t be refunded again.",
       "examples": [
         "Create an application fee refund",
         "Create an application fee refund by id"
@@ -3416,7 +3416,7 @@
       "name": "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>",
       "description": "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>",
       "examples": [
-        "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead. Confirmation of the PaymentIntent creates the <code>Charge</code>\nobject used to request payment.</p>"
+        "<p>This method is no longer recommended—use the <a href=\"/docs/api/payment_intents\">Payment Intents API</a>\nto initiate a new payment instead."
       ],
       "params": [],
       "returns": [
@@ -3697,7 +3697,7 @@
     {
       "id": "post_charges_charge_refund",
       "name": "Create a refund",
-      "description": "<p>When you create a new refund, you must specify either a Charge or a PaymentIntent object.</p>\n\n<p>This action refunds a previously created charge that’s not refunded yet.\nFunds are refunded to the credit or debit card that’s originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can repeat this until the entire charge is refunded.</p>\n\n<p>After you entirely refund a charge, you can’t refund it again.\nThis method raises an error when it’s called on an already-refunded charge,\nor when you attempt to refund more money than is left on a charge.</p>",
+      "description": "<p>When you create a new refund, you must specify either a Charge or a PaymentIntent object.</p>\n\n<p>This action refunds a previously created charge that’s not refunded yet.\nFunds are refunded to the credit or debit card that’s originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can repeat this until the entire charge is refunded.</p>\n\n<p>After you entirely refund a charge, you can’t refund it again.",
       "examples": [
         "Create a refund",
         "Create a refund by charge"
@@ -3786,7 +3786,7 @@
     {
       "id": "post_charges_charge_refunds",
       "name": "Create customer balance refund",
-      "description": "<p>When you create a new refund, you must specify a Charge or a PaymentIntent object on which to create it.</p>\n\n<p>Creating a new refund will refund a charge that has previously been created but not yet refunded.\nFunds will be refunded to the credit or debit card that was originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can do so multiple times, until the entire charge has been refunded.</p>\n\n<p>Once entirely refunded, a charge can’t be refunded again.\nThis method will raise an error when called on an already-refunded charge,\nor when trying to refund more money than is left on a charge.</p>",
+      "description": "<p>When you create a new refund, you must specify a Charge or a PaymentIntent object on which to create it.</p>\n\n<p>Creating a new refund will refund a charge that has previously been created but not yet refunded.\nFunds will be refunded to the credit or debit card that was originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can do so multiple times, until the entire charge has been refunded.</p>\n\n<p>Once entirely refunded, a charge can’t be refunded again.",
       "examples": [
         "Create customer balance refund",
         "Create customer balance refund by charge"
@@ -4727,7 +4727,7 @@
     {
       "id": "post_coupons",
       "name": "Create a coupon",
-      "description": "<p>You can create coupons easily via the <a href=\"https://dashboard.stripe.com/coupons\">coupon management</a> page of the Stripe dashboard. Coupon creation is also accessible via the API if you need to create coupons on the fly.</p>\n\n<p>A coupon has either a <code>percent_off</code> or an <code>amount_off</code> and <code>currency</code>. If you set an <code>amount_off</code>, that amount will be subtracted from any invoice’s subtotal. For example, an invoice with a subtotal of <currency>100</currency> will have a final total of <currency>0</currency> if a coupon with an <code>amount_off</code> of <amount>200</amount> is applied to it and an invoice with a subtotal of <currency>300</currency> will have a final total of <currency>100</currency> if a coupon with an <code>amount_off</code> of <amount>200</amount> is applied to it.</p>",
+      "description": "<p>You can create coupons easily via the <a href=\"https://dashboard.stripe.com/coupons\">coupon management</a> page of the Stripe dashboard. Coupon creation is also accessible via the API if you need to create coupons on the fly.</p>\n\n<p>A coupon has either a <code>percent_off</code> or an <code>amount_off</code> and <code>currency</code>. If you set an <code>amount_off</code>, that amount will be subtracted from any invoice’s subtotal.",
       "examples": [
         "Create a coupon",
         "<p>You can create coupons easily via the <a href=\"https://dashboard"
@@ -4931,7 +4931,7 @@
     {
       "id": "post_credit_notes",
       "name": "Create a credit note",
-      "description": "<p>Issue a credit note to adjust the amount of a finalized invoice. A credit note will first reduce the invoice’s <code>amount_remaining</code> (and <code>amount_due</code>), but not below zero.\nThis amount is indicated by the credit note’s <code>pre_payment_amount</code>. The excess amount is indicated by <code>post_payment_amount</code>, and it can result in any combination of the following:</p>\n\n<ul>\n<li>Refunds: create a new refund (using <code>refund_amount</code>) or link existing refunds (using <code>refunds</code>).</li>\n<li>Customer balance credit: credit the customer’s balance (using <code>credit_amount</code>) which will be automatically applied to their next invoice when it’s finalized.</li>\n<li>Outside of Stripe credit: record the amount that is or will be credited outside of Stripe (using <code>out_of_band_amount</code>).</li>\n</ul>\n\n<p>The sum of refunds, customer balance credits, and outside of Stripe credits must equal the <code>post_payment_amount</code>.</p>\n\n<p>You may issue multiple credit notes for an invoice. Each credit note may increment the invoice’s <code>pre_payment_credit_notes_amount</code>,\n<code>post_payment_credit_notes_amount</code>, or both, depending on the invoice’s <code>amount_remaining</code> at the time of credit note creation.</p>",
+      "description": "<p>Issue a credit note to adjust the amount of a finalized invoice. A credit note will first reduce the invoice’s <code>amount_remaining</code> (and <code>amount_due</code>), but not below zero.\nThis amount is indicated by the credit note’s <code>pre_payment_amount</code>.",
       "examples": [
         "Create a credit note",
         "<p>Issue a credit note to adjust the amount of a finalized invoice"
@@ -5562,7 +5562,7 @@
     {
       "id": "post_customers_customer",
       "name": "Update a customer",
-      "description": "<p>Updates the specified customer by setting the values of the parameters passed. Any parameters not provided are left unchanged. For example, if you pass the <strong>source</strong> parameter, that becomes the customer’s active source (such as a card) to be used for all charges in the future. When you update a customer to a new valid card source by passing the <strong>source</strong> parameter: for each of the customer’s current subscriptions, if the subscription bills automatically and is in the <code>past_due</code> state, then the latest open invoice for the subscription with automatic collection enabled is retried. This retry doesn’t count as an automatic retry, and doesn’t affect the next regularly scheduled payment for the invoice. Changing the <strong>default_source</strong> for a customer doesn’t trigger this behavior.</p>\n\n<p>This request accepts mostly the same arguments as the customer creation call.</p>",
+      "description": "<p>Updates the specified customer by setting the values of the parameters passed. Any parameters not provided are left unchanged. For example, if you pass the <strong>source</strong> parameter, that becomes the customer’s active source (such as a card) to be used for all charges in the future.",
       "examples": [
         "Update a customer",
         "Update a customer by customer"
@@ -7091,7 +7091,7 @@
     {
       "id": "delete_customers_customer_subscriptions_subscription_exposed_id",
       "name": "Cancel a subscription",
-      "description": "<p>Cancels a customer’s subscription. If you set the <code>at_period_end</code> parameter to <code>true</code>, the subscription will remain active until the end of the period, at which point it will be canceled and not renewed. Otherwise, with the default <code>false</code> value, the subscription is terminated immediately. In either case, the customer will not be charged again for the subscription.</p>\n\n<p>Note, however, that any pending invoice items that you’ve created will still be charged for at the end of the period, unless manually <a href=\"/api/invoiceitems/delete\">deleted</a>. If you’ve set the subscription to cancel at the end of the period, any pending prorations will also be left in place and collected at the end of the period. But if the subscription is set to cancel immediately, pending prorations will be removed.</p>\n\n<p>By default, upon subscription cancellation, Stripe will stop automatic collection of all finalized invoices for the customer. This is intended to prevent unexpected payment attempts after the customer has canceled a subscription. However, you can resume automatic collection of the invoices manually after subscription cancellation to have us proceed. Or, you could check for unpaid invoices before allowing the customer to cancel the subscription at all.</p>",
+      "description": "<p>Cancels a customer’s subscription. If you set the <code>at_period_end</code> parameter to <code>true</code>, the subscription will remain active until the end of the period, at which point it will be canceled and not renewed. Otherwise, with the default <code>false</code> value, the subscription is terminated immediately. In either case, the customer will not be charged again for the subscription.",
       "examples": [
         "Cancel a subscription",
         "<p>Cancels a customer’s subscription",
@@ -7495,7 +7495,7 @@
     {
       "id": "post_disputes_dispute",
       "name": "Update a dispute",
-      "description": "<p>When you get a dispute, contacting your customer is always the best first step. If that doesn’t work, you can submit evidence to help us resolve the dispute in your favor. You can do this in your <a href=\"https://dashboard.stripe.com/disputes\">dashboard</a>, but if you prefer, you can use the API to submit evidence programmatically.</p>\n\n<p>Depending on your dispute type, different evidence fields will give you a better chance of winning your dispute. To figure out which evidence fields to provide, see our <a href=\"/docs/disputes/categories\">guide to dispute types</a>.</p>",
+      "description": "<p>When you get a dispute, contacting your customer is always the best first step. If that doesn’t work, you can submit evidence to help us resolve the dispute in your favor. You can do this in your <a href=\"https://dashboard.stripe.com/disputes\">dashboard</a>, but if you prefer, you can use the API to submit evidence programmatically.</p>\n\n<p>Depending on your dispute type, different evidence fields will give you a better chance of winning your dispute.",
       "examples": [
         "Update a dispute",
         "Update a dispute by dispute"
@@ -8074,10 +8074,10 @@
     {
       "id": "post_external_accounts_id",
       "name": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
+      "description": "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.",
       "examples": [
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p>",
-        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency. Other bank account\ndetails are not editable by design.</p>\n\n<p>You can only update bank accounts when <a href=\"/api/accounts/object#account_object-controller-requirement_collection\">account.controller.requirement_collection</a> is <code>application</code>, which includes <a href=\"/connect/custom-accounts\">Custom accounts</a>.</p>\n\n<p>You can re-enable a disabled bank account by performing an update call without providing any\narguments or changes.</p> by id"
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency.",
+        "<p>Updates the metadata, account holder name, account holder type of a bank account belonging to\na connected account and optionally sets it as the default for its currency."
       ],
       "params": [
         {
@@ -9301,7 +9301,7 @@
     {
       "id": "post_identity_verification_sessions_session_redact",
       "name": "Redact a VerificationSession",
-      "description": "<p>Redact a VerificationSession to remove all collected information from Stripe. This will redact\nthe VerificationSession and all objects related to it, including VerificationReports, Events,\nrequest logs, etc.</p>\n\n<p>A VerificationSession object can be redacted when it is in <code>requires_input</code> or <code>verified</code>\n<a href=\"/docs/identity/how-sessions-work\">status</a>. Redacting a VerificationSession in <code>requires_action</code>\nstate will automatically cancel it.</p>\n\n<p>The redaction process may take up to four days. When the redaction process is in progress, the\nVerificationSession’s <code>redaction.status</code> field will be set to <code>processing</code>; when the process is\nfinished, it will change to <code>redacted</code> and an <code>identity.verification_session.redacted</code> event\nwill be emitted.</p>\n\n<p>Redaction is irreversible. Redacted objects are still accessible in the Stripe API, but all the\nfields that contain personal data will be replaced by the string <code>[redacted]</code> or a similar\nplaceholder. The <code>metadata</code> field will also be erased. Redacted objects cannot be updated or\nused for any purpose.</p>\n\n<p><a href=\"/docs/identity/verification-sessions#redact\">Learn more</a>.</p>",
+      "description": "<p>Redact a VerificationSession to remove all collected information from Stripe. This will redact\nthe VerificationSession and all objects related to it, including VerificationReports, Events,\nrequest logs, etc.</p>\n\n<p>A VerificationSession object can be redacted when it is in <code>requires_input</code> or <code>verified</code>\n<a href=\"/docs/identity/how-sessions-work\">status</a>. Redacting a VerificationSession in <code>requires_action</code>\nstate will automatically cancel it.",
       "examples": [
         "Redact a VerificationSession",
         "<p>Redact a VerificationSession to remove all collected information from Stripe",
@@ -9937,7 +9937,7 @@
     {
       "id": "post_invoices_create_preview",
       "name": "Create a preview invoice",
-      "description": "<p>At any time, you can preview the upcoming invoice for a subscription or subscription schedule. This will show you all the charges that are pending, including subscription renewal charges, invoice item charges, etc. It will also show you any discounts that are applicable to the invoice.</p>\n\n<p>You can also preview the effects of creating or updating a subscription or subscription schedule, including a preview of any prorations that will take place. To ensure that the actual proration is calculated exactly the same as the previewed proration, you should pass the <code>subscription_details.proration_date</code> parameter when doing the actual subscription update.</p>\n\n<p>The recommended way to get only the prorations being previewed on the invoice is to consider line items where <code>parent.subscription_item_details.proration</code> is <code>true</code>.</p>\n\n<p>Note that when you are viewing an upcoming invoice, you are simply viewing a preview – the invoice has not yet been created. As such, the upcoming invoice will not show up in invoice listing calls, and you cannot use the API to pay or edit the invoice. If you want to change the amount that your customer will be billed, you can add, remove, or update pending invoice items, or update the customer’s discount.</p>\n\n<p>Note: Currency conversion calculations use the latest exchange rates. Exchange rates may vary between the time of the preview and the time of the actual invoice creation. <a href=\"https://docs.stripe.com/currencies/conversions\">Learn more</a></p>",
+      "description": "<p>At any time, you can preview the upcoming invoice for a subscription or subscription schedule. This will show you all the charges that are pending, including subscription renewal charges, invoice item charges, etc. It will also show you any discounts that are applicable to the invoice.</p>\n\n<p>You can also preview the effects of creating or updating a subscription or subscription schedule, including a preview of any prorations that will take place.",
       "examples": [
         "Create a preview invoice"
       ],
@@ -10149,7 +10149,7 @@
     {
       "id": "post_invoices_invoice_attach_payment",
       "name": "Attach a payment to an Invoice",
-      "description": "<p>Attaches a PaymentIntent or an Out of Band Payment to the invoice, adding it to the list of <code>payments</code>.</p>\n\n<p>For the PaymentIntent, when the PaymentIntent’s status changes to <code>succeeded</code>, the payment is credited\nto the invoice, increasing its <code>amount_paid</code>. When the invoice is fully paid, the\ninvoice’s status becomes <code>paid</code>.</p>\n\n<p>If the PaymentIntent’s status is already <code>succeeded</code> when it’s attached, it’s\ncredited to the invoice immediately.</p>\n\n<p>See: <a href=\"/docs/invoicing/partial-payments\">Partial payments</a> to learn more.</p>",
+      "description": "<p>Attaches a PaymentIntent or an Out of Band Payment to the invoice, adding it to the list of <code>payments</code>.</p>\n\n<p>For the PaymentIntent, when the PaymentIntent’s status changes to <code>succeeded</code>, the payment is credited\nto the invoice, increasing its <code>amount_paid</code>. When the invoice is fully paid, the\ninvoice’s status becomes <code>paid</code>.",
       "examples": [
         "Attach a payment to an Invoice",
         "Attach a payment to an Invoice by invoice"
@@ -10405,7 +10405,7 @@
     {
       "id": "post_invoices_invoice_send",
       "name": "Send an invoice for manual payment",
-      "description": "<p>Stripe will automatically send invoices to customers according to your <a href=\"https://dashboard.stripe.com/account/billing/automatic\">subscriptions settings</a>. However, if you’d like to manually send an invoice to your customer out of the normal schedule, you can do so. When sending invoices that have already been paid, there will be no reference to the payment in the email.</p>\n\n<p>Requests made in test-mode result in no emails being sent, despite sending an <code>invoice.sent</code> event.</p>",
+      "description": "<p>Stripe will automatically send invoices to customers according to your <a href=\"https://dashboard.stripe.com/account/billing/automatic\">subscriptions settings</a>. However, if you’d like to manually send an invoice to your customer out of the normal schedule, you can do so. When sending invoices that have already been paid, there will be no reference to the payment in the email.</p>\n\n<p>Requests made in test-mode result in no emails being sent, despite sending an <code>invoice.",
       "examples": [
         "Send an invoice for manual payment",
         "Send an invoice for manual payment by invoice"
@@ -10470,7 +10470,7 @@
     {
       "id": "post_invoices_invoice_void",
       "name": "Void an invoice",
-      "description": "<p>Mark a finalized invoice as void. This cannot be undone. Voiding an invoice is similar to <a href=\"/api/invoices/delete\">deletion</a>, however it only applies to finalized invoices and maintains a papertrail where the invoice can still be found.</p>\n\n<p>Consult with local regulations to determine whether and how an invoice might be amended, canceled, or voided in the jurisdiction you’re doing business in. You might need to <a href=\"/api/invoices/create\">issue another invoice</a> or <a href=\"/api/credit_notes/create\">credit note</a> instead. Stripe recommends that you consult with your legal counsel for advice specific to your business.</p>",
+      "description": "<p>Mark a finalized invoice as void. This cannot be undone. Voiding an invoice is similar to <a href=\"/api/invoices/delete\">deletion</a>, however it only applies to finalized invoices and maintains a papertrail where the invoice can still be found.</p>\n\n<p>Consult with local regulations to determine whether and how an invoice might be amended, canceled, or voided in the jurisdiction you’re doing business in.",
       "examples": [
         "Void an invoice",
         "<p>Mark a finalized invoice as void",
@@ -12390,7 +12390,7 @@
     {
       "id": "post_payment_intents",
       "name": "Create a PaymentIntent",
-      "description": "<p>Creates a PaymentIntent object.</p>\n\n<p>After the PaymentIntent is created, attach a payment method and <a href=\"/docs/api/payment_intents/confirm\">confirm</a>\nto continue the payment. Learn more about <a href=\"/docs/payments/payment-intents\">the available payment flows\nwith the Payment Intents API</a>.</p>\n\n<p>When you use <code>confirm=true</code> during creation, it’s equivalent to creating\nand confirming the PaymentIntent in the same call. You can use any parameters\navailable in the <a href=\"/docs/api/payment_intents/confirm\">confirm API</a> when you supply\n<code>confirm=true</code>.</p>",
+      "description": "<p>Creates a PaymentIntent object.</p>\n\n<p>After the PaymentIntent is created, attach a payment method and <a href=\"/docs/api/payment_intents/confirm\">confirm</a>\nto continue the payment. Learn more about <a href=\"/docs/payments/payment-intents\">the available payment flows\nwith the Payment Intents API</a>.</p>\n\n<p>When you use <code>confirm=true</code> during creation, it’s equivalent to creating\nand confirming the PaymentIntent in the same call.",
       "examples": [
         "Create a PaymentIntent",
         "<p>Creates a PaymentIntent object"
@@ -12632,7 +12632,7 @@
     {
       "id": "post_payment_intents_intent_cancel",
       "name": "Cancel a PaymentIntent",
-      "description": "<p>You can cancel a PaymentIntent object when it’s in one of these statuses: <code>requires_payment_method</code>, <code>requires_capture</code>, <code>requires_confirmation</code>, <code>requires_action</code> or, <a href=\"/docs/payments/intents\">in rare cases</a>, <code>processing</code>. </p>\n\n<p>After it’s canceled, no additional charges are made by the PaymentIntent and any operations on the PaymentIntent fail with an error. For PaymentIntents with a <code>status</code> of <code>requires_capture</code>, the remaining <code>amount_capturable</code> is automatically refunded. </p>\n\n<p>You can directly cancel the PaymentIntent for a Checkout Session only when the PaymentIntent has a status of <code>requires_capture</code>. Otherwise, you must <a href=\"/docs/api/checkout/sessions/expire\">expire the Checkout Session</a>.</p>",
+      "description": "<p>You can cancel a PaymentIntent object when it’s in one of these statuses: <code>requires_payment_method</code>, <code>requires_capture</code>, <code>requires_confirmation</code>, <code>requires_action</code> or, <a href=\"/docs/payments/intents\">in rare cases</a>, <code>processing</code>. </p>\n\n<p>After it’s canceled, no additional charges are made by the PaymentIntent and any operations on the PaymentIntent fail with an error.",
       "examples": [
         "Cancel a PaymentIntent",
         "Cancel a PaymentIntent by intent"
@@ -12696,7 +12696,7 @@
     {
       "id": "post_payment_intents_intent_confirm",
       "name": "Confirm a PaymentIntent",
-      "description": "<p>Confirm that your customer intends to pay with current or provided\npayment method. Upon confirmation, the PaymentIntent will attempt to initiate\na payment.</p>\n\n<p>If the selected payment method requires additional authentication steps, the\nPaymentIntent will transition to the <code>requires_action</code> status and\nsuggest additional actions via <code>next_action</code>. If payment fails,\nthe PaymentIntent transitions to the <code>requires_payment_method</code> status or the\n<code>canceled</code> status if the confirmation limit is reached. If\npayment succeeds, the PaymentIntent will transition to the <code>succeeded</code>\nstatus (or <code>requires_capture</code>, if <code>capture_method</code> is set to <code>manual</code>).</p>\n\n<p>If the <code>confirmation_method</code> is <code>automatic</code>, payment may be attempted\nusing our <a href=\"/docs/stripe-js/reference#stripe-handle-card-payment\">client SDKs</a>\nand the PaymentIntent’s <a href=\"#payment_intent_object-client_secret\">client_secret</a>.\nAfter <code>next_action</code>s are handled by the client, no additional\nconfirmation is required to complete the payment.</p>\n\n<p>If the <code>confirmation_method</code> is <code>manual</code>, all payment attempts must be\ninitiated using a secret key.</p>\n\n<p>If any actions are required for the payment, the PaymentIntent will\nreturn to the <code>requires_confirmation</code> state\nafter those actions are completed. Your server needs to then\nexplicitly re-confirm the PaymentIntent to initiate the next payment\nattempt.</p>\n\n<p>There is a variable upper limit on how many times a PaymentIntent can be confirmed.\nAfter this limit is reached, any further calls to this endpoint will\ntransition the PaymentIntent to the <code>canceled</code> state.</p>",
+      "description": "<p>Confirm that your customer intends to pay with current or provided\npayment method. Upon confirmation, the PaymentIntent will attempt to initiate\na payment.</p>\n\n<p>If the selected payment method requires additional authentication steps, the\nPaymentIntent will transition to the <code>requires_action</code> status and\nsuggest additional actions via <code>next_action</code>.",
       "examples": [
         "Confirm a PaymentIntent",
         "Confirm a PaymentIntent by intent"
@@ -12728,7 +12728,7 @@
     {
       "id": "post_payment_intents_intent_increment_authorization",
       "name": "Increment an authorization",
-      "description": "<p>Perform an incremental authorization on an eligible\n<a href=\"/docs/api/payment_intents/object\">PaymentIntent</a>. To be eligible, the\nPaymentIntent’s status must be <code>requires_capture</code> and\n<a href=\"/docs/api/charges/object#charge_object-payment_method_details-card_present-incremental_authorization_supported\">incremental_authorization_supported</a>\nmust be <code>true</code>.</p>\n\n<p>Incremental authorizations attempt to increase the authorized amount on\nyour customer’s card to the new, higher <code>amount</code> provided. Similar to the\ninitial authorization, incremental authorizations can be declined. A\nsingle PaymentIntent can call this endpoint multiple times to further\nincrease the authorized amount.</p>\n\n<p>If the incremental authorization succeeds, the PaymentIntent object\nreturns with the updated\n<a href=\"/docs/api/payment_intents/object#payment_intent_object-amount\">amount</a>.\nIf the incremental authorization fails, a\n<a href=\"/docs/error-codes#card-declined\">card_declined</a> error returns, and no other\nfields on the PaymentIntent or Charge update. The PaymentIntent\nobject remains capturable for the previously authorized amount.</p>\n\n<p>Each PaymentIntent can have a maximum of 10 incremental authorization attempts, including declines.\nAfter it’s captured, a PaymentIntent can no longer be incremented.</p>\n\n<p>Learn more about incremental authorizations with\n<a href=\"/docs/terminal/features/incremental-authorizations\">in-person payments</a> and\n<a href=\"/docs/payments/incremental-authorization?platform=web&ui=elements\">online payments</a>.</p>",
+      "description": "<p>Perform an incremental authorization on an eligible\n<a href=\"/docs/api/payment_intents/object\">PaymentIntent</a>. To be eligible, the\nPaymentIntent’s status must be <code>requires_capture</code> and\n<a href=\"/docs/api/charges/object#charge_object-payment_method_details-card_present-incremental_authorization_supported\">incremental_authorization_supported</a>\nmust be <code>true</code>.",
       "examples": [
         "Increment an authorization",
         "Increment an authorization by intent"
@@ -13320,7 +13320,7 @@
     {
       "id": "post_payment_method_domains_payment_method_domain_validate",
       "name": "Validate an existing payment method domain",
-      "description": "<p>Some payment methods might require additional steps to register a domain. If the requirements weren’t satisfied when the domain was created, the payment method will be inactive on the domain.\nThe payment method doesn’t appear in Elements or Embedded Checkout for this domain until it is active.</p>\n\n<p>To activate a payment method on an existing payment method domain, complete the required registration steps specific to the payment method, and then validate the payment method domain with this endpoint.</p>\n\n<p>Related guides: <a href=\"/docs/payments/payment-methods/pmd-registration\">Payment method domains</a>.</p>",
+      "description": "<p>Some payment methods might require additional steps to register a domain. If the requirements weren’t satisfied when the domain was created, the payment method will be inactive on the domain.\nThe payment method doesn’t appear in Elements or Embedded Checkout for this domain until it is active.",
       "examples": [
         "Validate an existing payment method domain",
         "<p>Some payment methods might require additional steps to register a domain",
@@ -13524,7 +13524,7 @@
     {
       "id": "post_payment_methods_payment_method_attach",
       "name": "Attach a PaymentMethod to a Customer",
-      "description": "<p>Attaches a PaymentMethod object to a Customer.</p>\n\n<p>To attach a new PaymentMethod to a customer for future payments, we recommend you use a <a href=\"/docs/api/setup_intents\">SetupIntent</a>\nor a PaymentIntent with <a href=\"/docs/api/payment_intents/create#create_payment_intent-setup_future_usage\">setup_future_usage</a>.\nThese approaches will perform any necessary steps to set up the PaymentMethod for future payments. Using the <code>/v1/payment_methods/:id/attach</code>\nendpoint without first using a SetupIntent or PaymentIntent with <code>setup_future_usage</code> does not optimize the PaymentMethod for\nfuture use, which makes later declines and payment friction more likely.\nSee <a href=\"/docs/payments/payment-intents#future-usage\">Optimizing cards for future payments</a> for more information about setting up\nfuture payments.</p>\n\n<p>To use this PaymentMethod as the default for invoice or subscription payments,\nset <a href=\"/docs/api/customers/update#update_customer-invoice_settings-default_payment_method\"><code>invoice_settings.default_payment_method</code></a>,\non the Customer to the PaymentMethod’s ID.</p>",
+      "description": "<p>Attaches a PaymentMethod object to a Customer.</p>\n\n<p>To attach a new PaymentMethod to a customer for future payments, we recommend you use a <a href=\"/docs/api/setup_intents\">SetupIntent</a>\nor a PaymentIntent with <a href=\"/docs/api/payment_intents/create#create_payment_intent-setup_future_usage\">setup_future_usage</a>.\nThese approaches will perform any necessary steps to set up the PaymentMethod for future payments.",
       "examples": [
         "Attach a PaymentMethod to a Customer",
         "<p>Attaches a PaymentMethod object to a Customer",
@@ -13921,7 +13921,7 @@
     {
       "id": "post_payouts",
       "name": "Create a payout",
-      "description": "<p>To send funds to your own bank account, create a new payout object. Your <a href=\"#balance\">Stripe balance</a> must cover the payout amount. If it doesn’t, you receive an “Insufficient Funds” error.</p>\n\n<p>If your API key is in test mode, money won’t actually be sent, though every other action occurs as if you’re in live mode.</p>\n\n<p>If you create a manual payout on a Stripe account that uses multiple payment source types, you need to specify the source type balance that the payout draws from. The <a href=\"/api/balances/object\">balance object</a> details available and pending amounts by source type.</p>",
+      "description": "<p>To send funds to your own bank account, create a new payout object. Your <a href=\"#balance\">Stripe balance</a> must cover the payout amount. If it doesn’t, you receive an “Insufficient Funds” error.</p>\n\n<p>If your API key is in test mode, money won’t actually be sent, though every other action occurs as if you’re in live mode.",
       "examples": [
         "Create a payout",
         "<p>To send funds to your own bank account, create a new payout object"
@@ -14049,7 +14049,7 @@
     {
       "id": "post_payouts_payout_reverse",
       "name": "Reverse a payout",
-      "description": "<p>Reverses a payout by debiting the destination bank account. At this time, you can only reverse payouts for connected accounts to US and Canadian bank accounts. If the payout is manual and in the <code>pending</code> status, use <code>/v1/payouts/:id/cancel</code> instead.</p>\n\n<p>By requesting a reversal through <code>/v1/payouts/:id/reverse</code>, you confirm that the authorized signatory of the selected bank account authorizes the debit on the bank account and that no other authorization is required.</p>",
+      "description": "<p>Reverses a payout by debiting the destination bank account. At this time, you can only reverse payouts for connected accounts to US and Canadian bank accounts. If the payout is manual and in the <code>pending</code> status, use <code>/v1/payouts/:id/cancel</code> instead.",
       "examples": [
         "Reverse a payout",
         "<p>Reverses a payout by debiting the destination bank account",
@@ -16110,7 +16110,7 @@
     {
       "id": "post_refunds",
       "name": "Create customer balance refund",
-      "description": "<p>When you create a new refund, you must specify a Charge or a PaymentIntent object on which to create it.</p>\n\n<p>Creating a new refund will refund a charge that has previously been created but not yet refunded.\nFunds will be refunded to the credit or debit card that was originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can do so multiple times, until the entire charge has been refunded.</p>\n\n<p>Once entirely refunded, a charge can’t be refunded again.\nThis method will raise an error when called on an already-refunded charge,\nor when trying to refund more money than is left on a charge.</p>",
+      "description": "<p>When you create a new refund, you must specify a Charge or a PaymentIntent object on which to create it.</p>\n\n<p>Creating a new refund will refund a charge that has previously been created but not yet refunded.\nFunds will be refunded to the credit or debit card that was originally charged.</p>\n\n<p>You can optionally refund only part of a charge.\nYou can do so multiple times, until the entire charge has been refunded.</p>\n\n<p>Once entirely refunded, a charge can’t be refunded again.",
       "examples": [
         "Create customer balance refund"
       ],
@@ -16833,7 +16833,7 @@
     {
       "id": "post_setup_intents_intent_confirm",
       "name": "Confirm a SetupIntent",
-      "description": "<p>Confirm that your customer intends to set up the current or\nprovided payment method. For example, you would confirm a SetupIntent\nwhen a customer hits the “Save” button on a payment method management\npage on your website.</p>\n\n<p>If the selected payment method does not require any additional\nsteps from the customer, the SetupIntent will transition to the\n<code>succeeded</code> status.</p>\n\n<p>Otherwise, it will transition to the <code>requires_action</code> status and\nsuggest additional actions via <code>next_action</code>. If setup fails,\nthe SetupIntent will transition to the\n<code>requires_payment_method</code> status or the <code>canceled</code> status if the\nconfirmation limit is reached.</p>",
+      "description": "<p>Confirm that your customer intends to set up the current or\nprovided payment method. For example, you would confirm a SetupIntent\nwhen a customer hits the “Save” button on a payment method management\npage on your website.</p>\n\n<p>If the selected payment method does not require any additional\nsteps from the customer, the SetupIntent will transition to the\n<code>succeeded</code> status.",
       "examples": [
         "Confirm a SetupIntent",
         "Confirm a SetupIntent by intent"
@@ -18018,7 +18018,7 @@
     {
       "id": "post_subscriptions",
       "name": "Create a subscription",
-      "description": "<p>Creates a new subscription on an existing customer. Each customer can have up to 500 active or scheduled subscriptions.</p>\n\n<p>When you create a subscription with <code>collection_method=charge_automatically</code>, the first invoice is finalized as part of the request.\nThe <code>payment_behavior</code> parameter determines the exact behavior of the initial payment.</p>\n\n<p>To start subscriptions where the first invoice always begins in a <code>draft</code> status, use <a href=\"/docs/billing/subscriptions/subscription-schedules#managing\">subscription schedules</a> instead.\nSchedules provide the flexibility to model more complex billing configurations that change over time.</p>",
+      "description": "<p>Creates a new subscription on an existing customer. Each customer can have up to 500 active or scheduled subscriptions.</p>\n\n<p>When you create a subscription with <code>collection_method=charge_automatically</code>, the first invoice is finalized as part of the request.\nThe <code>payment_behavior</code> parameter determines the exact behavior of the initial payment.",
       "examples": [
         "Create a subscription",
         "<p>Creates a new subscription on an existing customer"
@@ -18132,7 +18132,7 @@
     {
       "id": "post_subscriptions_subscription_exposed_id",
       "name": "Update a subscription",
-      "description": "<p>Updates an existing subscription to match the specified parameters.\nWhen changing prices or quantities, we optionally prorate the price we charge next month to make up for any price changes.\nTo preview how the proration is calculated, use the <a href=\"/docs/api/invoices/create_preview\">create preview</a> endpoint.</p>\n\n<p>By default, we prorate subscription changes. For example, if a customer signs up on May 1 for a <currency>100</currency> price, they’ll be billed <currency>100</currency> immediately. If on May 15 they switch to a <currency>200</currency> price, then on June 1 they’ll be billed <currency>250</currency> (<currency>200</currency> for a renewal of her subscription, plus a <currency>50</currency> prorating adjustment for half of the previous month’s <currency>100</currency> difference). Similarly, a downgrade generates a credit that is applied to the next invoice. We also prorate when you make quantity changes.</p>\n\n<p>Switching prices does not normally change the billing date or generate an immediate charge unless:</p>\n\n<ul>\n<li>The billing interval is changed (for example, from monthly to yearly).</li>\n<li>The subscription moves from free to paid.</li>\n<li>A trial starts or ends.</li>\n</ul>\n\n<p>In these cases, we apply a credit for the unused time on the previous price, immediately charge the customer using the new price, and reset the billing date. Learn about how <a href=\"/docs/billing/subscriptions/upgrade-downgrade#immediate-payment\">Stripe immediately attempts payment for subscription changes</a>.</p>\n\n<p>If you want to charge for an upgrade immediately, pass <code>proration_behavior</code> as <code>always_invoice</code> to create prorations, automatically invoice the customer for those proration adjustments, and attempt to collect payment. If you pass <code>create_prorations</code>, the prorations are created but not automatically invoiced. If you want to bill the customer for the prorations before the subscription’s renewal date, you need to manually <a href=\"/docs/api/invoices/create\">invoice the customer</a>.</p>\n\n<p>If you don’t want to prorate, set the <code>proration_behavior</code> option to <code>none</code>. With this option, the customer is billed <currency>100</currency> on May 1 and <currency>200</currency> on June 1. Similarly, if you set <code>proration_behavior</code> to <code>none</code> when switching between different billing intervals (for example, from monthly to yearly), we don’t generate any credits for the old subscription’s unused time. We still reset the billing date and bill immediately for the new subscription.</p>\n\n<p>Updating the quantity on a subscription many times in an hour may result in <a href=\"/docs/rate-limits\">rate limiting</a>. If you need to bill for a frequently changing quantity, consider integrating <a href=\"/docs/billing/subscriptions/usage-based\">usage-based billing</a> instead.</p>",
+      "description": "<p>Updates an existing subscription to match the specified parameters.\nWhen changing prices or quantities, we optionally prorate the price we charge next month to make up for any price changes.\nTo preview how the proration is calculated, use the <a href=\"/docs/api/invoices/create_preview\">create preview</a> endpoint.</p>\n\n<p>By default, we prorate subscription changes.",
       "examples": [
         "Update a subscription",
         "<p>Updates an existing subscription to match the specified parameters",
@@ -18165,7 +18165,7 @@
     {
       "id": "delete_subscriptions_subscription_exposed_id",
       "name": "Cancel a subscription",
-      "description": "<p>Cancels a customer’s subscription immediately. The customer won’t be charged again for the subscription. After it’s canceled, the subscription is largely immutable. You can still update its <a href=\"/metadata\">metadata</a> and <code>cancellation_details</code>.</p>\n\n<p>Any pending invoice items that you’ve created are still charged at the end of the period, unless manually <a href=\"/api/invoiceitems/delete\">deleted</a>. If you’ve set the subscription to cancel at the end of the period, any pending prorations are also left in place and collected at the end of the period. But if the subscription is set to cancel immediately, pending prorations are removed if <code>invoice_now</code> and <code>prorate</code> are both set to true.</p>\n\n<p>By default, upon subscription cancellation, Stripe stops automatic collection of all finalized invoices for the customer. This is intended to prevent unexpected payment attempts after the customer has canceled a subscription. However, you can resume automatic collection of the invoices manually after subscription cancellation to have us proceed. Or, you could check for unpaid invoices before allowing the customer to cancel the subscription at all.</p>",
+      "description": "<p>Cancels a customer’s subscription immediately. The customer won’t be charged again for the subscription. After it’s canceled, the subscription is largely immutable. You can still update its <a href=\"/metadata\">metadata</a> and <code>cancellation_details</code>.</p>\n\n<p>Any pending invoice items that you’ve created are still charged at the end of the period, unless manually <a href=\"/api/invoiceitems/delete\">deleted</a>.",
       "examples": [
         "Cancel a subscription",
         "<p>Cancels a customer’s subscription immediately",
@@ -18264,7 +18264,7 @@
     {
       "id": "post_subscriptions_subscription_resume",
       "name": "Resume a subscription",
-      "description": "<p>Initiates resumption of a paused subscription, optionally resetting the billing cycle anchor and creating prorations. Resume is only available for subscriptions that use <code>charge_automatically</code> collection. If Stripe doesn’t generate a resumption invoice, the subscription becomes <code>active</code> immediately. When a resumption invoice is generated, Stripe finalizes it immediately. If the invoice is paid or marked uncollectible, the subscription becomes <code>active</code>. If the invoice is manually voided, the subscription stays <code>paused</code>. If there is no payment attempt within 23 hours, Stripe voids the invoice and the subscription stays <code>paused</code>. Learn more about <a href=\"/docs/billing/subscriptions/pause#resume-subscriptions\">resuming subscriptions</a>.</p>",
+      "description": "<p>Initiates resumption of a paused subscription, optionally resetting the billing cycle anchor and creating prorations. Resume is only available for subscriptions that use <code>charge_automatically</code> collection. If Stripe doesn’t generate a resumption invoice, the subscription becomes <code>active</code> immediately. When a resumption invoice is generated, Stripe finalizes it immediately. If the invoice is paid or marked uncollectible, the subscription becomes <code>active</code>.",
       "examples": [
         "Resume a subscription",
         "Resume a subscription by subscription"
@@ -23620,7 +23620,7 @@
     {
       "id": "post_webhook_endpoints",
       "name": "Create a webhook endpoint",
-      "description": "<p>A webhook endpoint must have a <code>url</code> and a list of <code>enabled_events</code>. You may optionally specify the Boolean <code>connect</code> parameter. If set to true, then a Connect webhook endpoint that notifies the specified <code>url</code> about events from all connected accounts is created; otherwise an account webhook endpoint that notifies the specified <code>url</code> only about events from your account is created. You can also create webhook endpoints in the <a href=\"https://dashboard.stripe.com/account/webhooks\">webhooks settings</a> section of the Dashboard.</p>",
+      "description": "<p>A webhook endpoint must have a <code>url</code> and a list of <code>enabled_events</code>. You may optionally specify the Boolean <code>connect</code> parameter. If set to true, then a Connect webhook endpoint that notifies the specified <code>url</code> about events from all connected accounts is created; otherwise an account webhook endpoint that notifies the specified <code>url</code> only about events from your account is created.",
       "examples": [
         "Create a webhook endpoint"
       ],
