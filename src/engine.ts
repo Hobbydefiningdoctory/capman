@@ -521,12 +521,21 @@ export class CapmanEngine {
                 .join('\n')
 
               const paramPrompt =
-              `Extract the following parameters from this user query.\n` +
-              `Query: ${JSON.stringify({ user_query: query })}\n\n` +
-              `Parameters to extract:\n${paramDescriptions}\n\n` +
-              `Respond ONLY with valid JSON: { "params": { "<name>": "<value or null>" } }`
+                `Extract the following parameters from this user query.\n` +
+                `Parameters to extract:\n${paramDescriptions}\n\n` +
+                `Respond ONLY with valid JSON: { "params": { "<name>": "<value or null>" } }\n\n` +
+                `---USER_QUERY_START---\n` +
+                `${JSON.stringify({ user_query: query })}\n` +
+                `---USER_QUERY_END---`
 
-            const raw    = await this.llm(paramPrompt)
+                const PARAM_DELIMITER  = '---USER_QUERY_START---'
+                const paramDelimIdx    = paramPrompt.indexOf(PARAM_DELIMITER)
+                const raw = this.llmWithMessages && paramDelimIdx !== -1
+                  ? await this.llmWithMessages([
+                      { role: 'system', content: paramPrompt.slice(0, paramDelimIdx).trimEnd() },
+                      { role: 'user',   content: paramPrompt.slice(paramDelimIdx + PARAM_DELIMITER.length).trim().replace(/\n---USER_QUERY_END---$/, '').trim() },
+                    ])
+                  : await this.llm(paramPrompt)
             const clean  = raw.replace(/```json|```/g, '').trim()
             const parsed = JSON.parse(clean)
 
@@ -1151,8 +1160,8 @@ export class CapmanEngine {
           }
           return filtered
         })()
-
-          switch (this.mode) {
+      
+        switch (this.mode) {
       case 'cheap': {
         const t = Date.now()
         matchResult = _match(query, this.manifest)

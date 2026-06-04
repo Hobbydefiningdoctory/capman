@@ -205,7 +205,7 @@ Key exports:
 - `EngineOptions` — all constructor options
 - `EngineResult` — `{ match, resolution, resolvedVia, durationMs, trace }`
 
-⚠️ **Concurrency:** `CapmanEngine` is not safe for sharing across concurrent async request handlers. The LLM rate limiter, circuit breaker, and learning index cache are instance-level mutable state. Create one engine per request in server deployments, or use `cheap` mode for shared instances.
+⚠️ **Concurrency:** Node.js is single-threaded — classical data races don't apply. Real hazard is async interleaving at `await` points. `loadManifest()` mid-flight is guarded by an optimistic `manifestVersion` counter — in-flight `ask()` calls skip their cache write rather than polluting the cache with stale data. For shared-instance servers with LLM calls, use `ConcurrentCapmanEngine`. See `CONCURRENCY.md`.
 
 `CapmanEngine` methods:
 - `ask(query, overrides?)` → `EngineResult` — full pipeline: cache → match → boost → resolve → learn
@@ -221,8 +221,11 @@ Key exports:
 - `cacheTtlMs` — optional TTL for cache entries in ms (default: no expiry)
 - `maxLLMCallsPerMinute` — rate limit (default: 60). Set to 0 to disable LLM entirely
 - `llmCooldownMs`, `llmCircuitBreakerThreshold`, `llmCircuitBreakerResetMs`
-- `learningHalfLifeDays` — half-life in days for time-decayed learning (default: 30). Only applies when engine creates its own default store
+- `halfLifeDays` — half-life in days for time-decayed learning (default: 30). Only applies when engine creates its own default `MemoryLearningStore`
 - `embedding` — optional `EmbeddingProvider` for semantic similarity. Pre-encodes capabilities at construction and after `loadManifest()`. Fused into RRF as third signal. Failures fall back gracefully to BM25+fuzzy
+- `llmTagFilter` — string array; only capabilities with ALL matching tags are eligible for LLM top-3 selection. BM25 always uses the full manifest. Falls back to full manifest with `logger.warn` if filter matches nothing
+- `llmWithMessages` — structured `(messages: LLMMessage[]) => Promise<string>` interface. When provided, capability context goes to system message and the sanitized query goes to user message. Preferred over `llm` when both supplied. Stronger prompt injection resistance
+- `environment` — target environment for `manifest.servers[]` selection (e.g. `'production'`, `'staging'`)
 
 Matching pipeline in `ask()`:
 1. Cache check — return immediately on hit (public capabilities only). Re-extracts params fresh from current query
