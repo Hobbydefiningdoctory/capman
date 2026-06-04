@@ -16,7 +16,7 @@ export interface CacheEntry {
 
 export interface CacheStore {
   get(key: string, ttlMs?: number): Promise<CacheEntry | null>
-  set(key: string, result: MatchResult): Promise<void>
+  set(key: string, result: MatchResult, originalQuery?: string): Promise<void>
   clear(): Promise<void>
   size(): Promise<number>
 }
@@ -27,7 +27,7 @@ export function normalizeQuery(query: string): string {
   return query
     .toLowerCase()
     .trim()
-    .replace(/[^\w\s]/g, '')  // strip punctuation — "show orders!" and "show orders" same key
+    .replace(/[^\p{L}\p{N}\s]/gu, '')   // Unicode-aware: preserves Japanese, Arabic, accented Latin etc.
     .replace(/\s+/g, ' ')
     .trim()
 }
@@ -78,14 +78,14 @@ export class MemoryCache implements CacheStore {
     return null
   }
 
-  async set(key: string, result: MatchResult): Promise<void> {
+  async set(key: string, result: MatchResult, originalQuery?: string): Promise<void> {
     if (this.store.size >= MEMORY_CACHE_MAX) {
       const oldest = this.store.keys().next().value
       if (oldest !== undefined) this.store.delete(oldest)
       logger.debug(`Cache evicted oldest entry (max size ${MEMORY_CACHE_MAX} reached)`)
     }
     this.store.set(key, {
-      query: key,
+      query: originalQuery ?? key,
       result,
       cachedAt: new Date().toISOString(),
       hits: 0,
@@ -232,7 +232,7 @@ export class FileCache implements CacheStore {
     return entry
   }
 
-  async set(key: string, result: MatchResult): Promise<void> {
+     async set(key: string, result: MatchResult, originalQuery?: string): Promise<void> {
     await this.load()
     if (this.store.size >= FILE_CACHE_MAX) {
       const oldest = this.store.keys().next().value
@@ -242,12 +242,12 @@ export class FileCache implements CacheStore {
       }
     }
     this.store.set(key, {
-      query: key,
+      query: originalQuery ?? key,
       result,
       cachedAt: new Date().toISOString(),
       hits: 0,
     })
-    await this.save()
+    this.scheduleSave()
     logger.debug(`Cache set (file): "${key}"`)
   }
 
@@ -285,10 +285,10 @@ export class ComboCache implements CacheStore {
     return null
   }
 
-  async set(key: string, result: MatchResult): Promise<void> {
+  async set(key: string, result: MatchResult, originalQuery?: string): Promise<void> {
     await Promise.all([
-      this.memory.set(key, result),
-      this.file.set(key, result),
+      this.memory.set(key, result, originalQuery),
+      this.file.set(key, result, originalQuery),
     ])
   }
 

@@ -250,9 +250,13 @@ async function resolveApi(
               }
             }
 
-            const res = await fetchFn(call.url, {
+             const isBodyMethod = ['POST', 'PUT', 'PATCH'].includes(call.method)
+             const bodyHeaders: Record<string, string> = isBodyMethod
+               ? { 'Content-Type': 'application/json' }
+               : {}
+             const res = await fetchFn(call.url, {
               method: call.method,
-              headers: { ...options.headers ?? {}, ...idempotencyHeaders },
+              headers: { ...bodyHeaders, ...options.headers ?? {}, ...idempotencyHeaders },
               signal: controller.signal,
               body: ['POST', 'PUT', 'PATCH'].includes(call.method)
           ? JSON.stringify(

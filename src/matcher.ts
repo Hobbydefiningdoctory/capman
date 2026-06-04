@@ -93,6 +93,11 @@ function extractFromTemplate(query: string, template: string, paramName: string)
 // is finite (capability names + user query vocabulary) so growth is bounded
 // in practice. In test environments with synthetic random strings, this may
 // grow larger but remains functionally harmless.
+const EST_EXCLUSIONS = new Set([
+  'manifest', 'request', 'interest', 'suggest', 'protest',
+  'contest', 'forest', 'harvest', 'arest', 'modest', 'honest',
+])
+
 const stemCache = new Map<string, string>()
 
 /**
@@ -111,7 +116,8 @@ export function stem(word: string): string {
   else if (s.length > 6 && s.endsWith('ing'))   s = s.slice(0, -3)  // tracking → track
   else if (s.length > 6 && s.endsWith('ity'))   s = s.slice(0, -3)  // availability → availabil
   else if (s.length > 5 && s.endsWith('ion'))   s = s.slice(0, -3)  // version → vers
-  else if (s.length > 6 && s.endsWith('est'))   s = s.slice(0, -3)  // fastest → fast
+    else if (s.length > 6 && s.endsWith('est') &&
+             !EST_EXCLUSIONS.has(s))               s = s.slice(0, -3)  // fastest → fast (NOT manifest/request)
   else if (s.length > 4 && s.endsWith('er'))    s = s.slice(0, -2)  // tracker → track
   else if (s.length > 4 && s.endsWith('ed'))    s = s.slice(0, -2)  // ordered → order
   else if (s.length > 4 && s.endsWith('ly'))    s = s.slice(0, -2)  // quickly → quick

@@ -491,8 +491,15 @@ export class CapmanEngine {
           matchResult.capability.id,
           matchResult.extractedParams as Record<string, string | null>
         )
-        await this.cache.set(queryKey, matchResult)
-        await this.cache.set(capKey, matchResult)
+        // Snapshot extractedParams before Step 5b LLM extraction can mutate them.
+        // MemoryCache stores by reference — without this copy, Step 5b writes into
+        // the already-cached object, leaking one user's params to the next cache hit.
+        const matchResultForCache: typeof matchResult = {
+          ...matchResult,
+          extractedParams: { ...matchResult.extractedParams },
+        }
+        await this.cache.set(queryKey, matchResultForCache, query)
+        await this.cache.set(capKey, matchResultForCache, query)
         // capKey always starts with 'cap:' — structurally distinct from queryKey
       } else {
         logger.warn('loadManifest() called mid-flight — skipping cache write for stale result')
@@ -517,8 +524,9 @@ export class CapmanEngine {
             try {
               const paramExtractionStart = Date.now()
               const paramDescriptions = unresolved
-                .map(p => `- ${p.name}: ${p.description}`)
-                .join('\n')
+              .map(p => `- ${sanitizeForPrompt(p.name, 50)}: ${sanitizeForPrompt(p.description ?? '', 150)}`)
+              .join('\n')
+              // Use the same prompt structure as matchWithLLM() — system/user separation
 
               const paramPrompt =
                 `Extract the following parameters from this user query.\n` +
@@ -804,7 +812,10 @@ export class CapmanEngine {
       normB += b[i] * b[i]
     }
     const denom = Math.sqrt(normA) * Math.sqrt(normB)
-    return denom === 0 ? 0 : dot / denom
+    const result = denom === 0 ? 0 : dot / denom
+    // Guard against NaN/Infinity from malformed embedding vectors
+    return isFinite(result) ? result : 0
+
   }
 
   /** Encode query and return cosine similarity scores (0–100) keyed by capability ID */
@@ -813,6 +824,8 @@ export class CapmanEngine {
     // Wait for any in-flight re-encode from loadManifest() to finish.
     // Without this, the first ask() after loadManifest returns uses stale embeddings.
     if (this.pendingEmbedding) await this.pendingEmbedding
+    // Re-check after await: encode may have failed and set capEmbeddings to undefined.
+    if (!this.capEmbeddings) return undefined
     try {
       const [queryVec] = await this.embedding.encode([query])
       const scores = new Map<string, number>()
@@ -1160,7 +1173,6 @@ export class CapmanEngine {
           }
           return filtered
         })()
-      
         switch (this.mode) {
       case 'cheap': {
         const t = Date.now()
