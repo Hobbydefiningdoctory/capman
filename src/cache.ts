@@ -16,7 +16,7 @@ export interface CacheEntry {
 
 export interface CacheStore {
   get(key: string, ttlMs?: number): Promise<CacheEntry | null>
-  set(key: string, result: MatchResult, originalQuery?: string): Promise<void>
+   set(key: string, result: MatchResult, originalQuery?: string): Promise<void>
   clear(): Promise<void>
   size(): Promise<number>
 }
@@ -24,12 +24,13 @@ export interface CacheStore {
 // ─── Normalize query for cache key ────────────────────────────────────────────
 
 export function normalizeQuery(query: string): string {
-  return query
+  const normalized = query
     .toLowerCase()
     .trim()
     .replace(/[^\p{L}\p{N}\s]/gu, '')   // Unicode-aware: preserves Japanese, Arabic, accented Latin etc.
     .replace(/\s+/g, ' ')
     .trim()
+    return normalized || query.trim()
 }
 
 /**

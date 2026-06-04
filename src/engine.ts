@@ -1001,18 +1001,8 @@ export class CapmanEngine {
       resolverType = cap.resolver.type as ResolverType
 
       // Check if privacy would block — mirrors checkPrivacy() in resolver.ts
-      if (cap.privacy.level === 'user_owned') {
-        if (!this.auth?.isAuthenticated) {
-          blocked = `Capability "${cap.id}" requires authentication (privacy: user_owned)`
-        }
-      } else if (cap.privacy.level === 'admin') {
-        if (!this.auth?.isAuthenticated) {
-          blocked = `Capability "${cap.id}" requires authentication (privacy: admin)`
-        } else if (this.auth.role !== 'admin') {
-          blocked = `Capability "${cap.id}" requires admin role (current role: ${this.auth.role ?? 'none'})`
-        }
-      }
-  
+      const privacyErr = checkPrivacy(cap, this.auth)
+      if (privacyErr) blocked = privacyErr
 
       if (!blocked) {
         // Build action string
