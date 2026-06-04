@@ -189,7 +189,7 @@ async function resolveApi(
   const timeoutMs = options.timeoutMs ?? 5000
 
   // Map url → endpoint metadata for idempotency and Idempotency-Key injection
-  const endpointMeta = new Map<string, { idempotent?: boolean; idempotencyKey?: string }>()
+  const endpointMeta = new Map<string, { idempotent?: boolean; idempotencyKey?: string; sendBody?: boolean }>()
 
   const apiCalls: ApiCallResult[] = resolver.endpoints.map(endpoint => {
     const endpointParams = { ...params }
@@ -202,6 +202,7 @@ async function resolveApi(
     endpointMeta.set(url, {
       idempotent:     endpoint.idempotent,
       idempotencyKey: endpoint.idempotencyKey,
+      sendBody:       endpoint.sendBody,
     })
     return {
       method: endpoint.method,
@@ -251,6 +252,7 @@ async function resolveApi(
             }
 
              const isBodyMethod = ['POST', 'PUT', 'PATCH'].includes(call.method)
+               || (call.method === 'DELETE' && meta?.sendBody === true)
              const bodyHeaders: Record<string, string> = isBodyMethod
                ? { 'Content-Type': 'application/json' }
                : {}

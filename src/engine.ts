@@ -298,7 +298,12 @@ export class CapmanEngine {
     this.bm25Index = buildBM25Index(options.manifest.capabilities)
     this.bm25Ceiling = this.calibrateBM25Ceiling()
     this.marginAwareLLM = options.marginAwareLLM ?? false
-    this.adaptiveMargin = options.adaptiveMarginOverride ?? this.calibrateAdaptiveMargin()
+    this.adaptiveMargin = options.adaptiveMarginOverride ?? 20  // safe fallback
+    if (!options.adaptiveMarginOverride) {
+      setImmediate(() => {
+        this.adaptiveMargin = this.calibrateAdaptiveMargin()
+      })
+    }
 
     // Cache — default MemoryCache (no filesystem writes), or disabled with false
     // Use FileCache or ComboCache explicitly for persistence across restarts
@@ -871,7 +876,8 @@ export class CapmanEngine {
   this.manifest       = manifest
   this.bm25Index      = buildBM25Index(manifest.capabilities)
   this.bm25Ceiling    = this.calibrateBM25Ceiling()
-  this.adaptiveMargin = this.calibrateAdaptiveMargin()
+  this.adaptiveMargin = 20
+    setImmediate(() => { this.adaptiveMargin = this.calibrateAdaptiveMargin() })
   this.manifestVersion++
   // server selection updates automatically after loadManifest()
   await this.clearCache()

@@ -58,6 +58,11 @@ export interface Endpoint {
    * e.g. idempotencyKey: 'order_id' → `Idempotency-Key: ORD-12345`
    */
   idempotencyKey?:   string
+  /**
+   * When true, a JSON body is sent even for DELETE requests.
+   * Some APIs (e.g. Elasticsearch) accept a body on DELETE for query params.
+   */
+  sendBody?:         boolean
 }
 
 export interface ApiResolver {
