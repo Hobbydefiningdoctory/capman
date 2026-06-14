@@ -19,7 +19,6 @@ manifest.json
 
 # pnpm / monorepo internals
 pnpm-lock.yaml
-pnpm-workspace.yaml
 
 # macOS
 .DS_Store

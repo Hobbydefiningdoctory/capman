@@ -26,8 +26,6 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        env:
-          pnpm_config_only_built_dependencies: "esbuild"
         run: pnpm install --frozen-lockfile
 
       - name: Build
