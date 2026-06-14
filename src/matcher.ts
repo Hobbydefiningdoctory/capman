@@ -378,8 +378,9 @@ export function sanitizeForPrompt(value: string, maxLen: number): string {
   return value
     .replace(/[\r\n\t]/g, ' ')           // newlines/tabs → space
     .replace(/---+/g, '—')               // horizontal rules → em dash
-    .replace(/\{(?!\w+\})/g, ' ')        // { not followed by word}
-    .replace(/(?<!\{\w+)\}/g, ' ')       // } not preceded by {word
+    .replace(/\{(\w+)\}/g, '\x00$1\x00')  // protect valid placeholders
+    .replace(/[{}]/g, ' ')                  // strip all remaining braces
+    .replace(/\x00(\w+)\x00/g, '{$1}')      // restore protected ones
     .split(' ')                          // per-word cap — limits injection payload per token
     .map(w => w.slice(0, 200))           // no single token longer than 200 chars
     .join(' ')

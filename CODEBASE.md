@@ -473,7 +473,7 @@ When an API call fails and the HTTP status matches an entry, `resolution.matched
 - `idempotencyKey?: string` — param name whose value is sent as `Idempotency-Key` header automatically
 
 **`Manifest`** additional fields:
-- `schemaVersion: string` — manifest format version, independent of package version. `'1'` = v0.6+ schema. Manifests without this field are pre-v0.6; engine warns but continues
+- `schemaVersion: string` — manifest format version, independent of package version. `'1.0.0'` = v0.6+ schema. Manifests without this field are pre-v0.6; engine warns but continues
 - `tagRegistry?: Record<string, { description: string }>` — optional documentation for tags used in capabilities. Not required for tags to work
 - `info?: ManifestInfo` — title, description, version, homepage, contact, license — documentation and provenance only, not used at runtime
 - `servers?: Server[]` — multi-environment server definitions. Engine selects `baseUrl` by matching `environment` option, falls back to first server, then `EngineOptions.baseUrl`

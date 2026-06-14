@@ -4,29 +4,6 @@ All notable changes to capman are documented here.
 
 ---
 
-## [0.6.1] — 2026-05-21
-### Added
-
-**Manifest Schema (Non-breaking additions)**
-- `schemaVersion` field on manifests — engine warns on missing or mismatched version, never throws
-- `capability.lifecycle` — `deprecated`, `beta`, `experimental`, `sunset` statuses with advisory warnings
-- `capability.tags[]` + `manifest.tagRegistry` + `filterByTags()` utility
-- `param.type`, `param.enum`, `param.example` — typed param extraction with enum validation
-- `capability.errors[]` — declarative HTTP error mapping surfaced in `ResolveResult.matchedError`
-- `endpoint.idempotent` + `endpoint.idempotencyKey` — safe POST retry and automatic header injection
-- `manifest.info` block — `title`, `version`, `description`, `contact`, `license`
-- `manifest.servers[]` — environment-aware base URL selection via `EngineOptions.environment`
-- `capability.matchHint.preferredMode` — advisory preferred matching mode with warning when ignored
-
-**Learning Maturity**
-- Time-decayed learning (`halfLifeDays`) — older learning signals decay exponentially; `lastUpdated` stamped per entry with file mtime migration guard for pre-v0.7 data
-- Learning IDF weighting — BM25 IDF applied to learning boost; common words ("get", "show") contribute minimal signal
-- RRF fusion — BM25 and Fuse.js scores combined via Reciprocal Rank Fusion with theoretical-max normalization anchor
-- LLM top-K reranker — BM25 narrows to top-3 before LLM call; 93% token cost reduction; OOS fallback when no candidates score above zero
-- `EmbeddingProvider` interface — opt-in semantic similarity as third RRF signal; pre-encoded at construction, re-encoded on `loadManifest()`
-
----
-
 ## [0.6.2] — 2026-05-26
 
 **Concurrency Safety**
@@ -47,6 +24,29 @@ All notable changes to capman are documented here.
 
 ### Tests
 - 132 tests passing
+
+---
+
+## [0.6.1] — 2026-05-21
+### Added
+
+**Manifest Schema (Non-breaking additions)**
+- `schemaVersion` field on manifests — engine warns on missing or mismatched version, never throws
+- `capability.lifecycle` — `deprecated`, `beta`, `experimental`, `sunset` statuses with advisory warnings
+- `capability.tags[]` + `manifest.tagRegistry` + `filterByTags()` utility
+- `param.type`, `param.enum`, `param.example` — typed param extraction with enum validation
+- `capability.errors[]` — declarative HTTP error mapping surfaced in `ResolveResult.matchedError`
+- `endpoint.idempotent` + `endpoint.idempotencyKey` — safe POST retry and automatic header injection
+- `manifest.info` block — `title`, `version`, `description`, `contact`, `license`
+- `manifest.servers[]` — environment-aware base URL selection via `EngineOptions.environment`
+- `capability.matchHint.preferredMode` — advisory preferred matching mode with warning when ignored
+
+**Learning Maturity**
+- Time-decayed learning (`halfLifeDays`) — older learning signals decay exponentially; `lastUpdated` stamped per entry with file mtime migration guard for pre-v0.7 data
+- Learning IDF weighting — BM25 IDF applied to learning boost; common words ("get", "show") contribute minimal signal
+- RRF fusion — BM25 and Fuse.js scores combined via Reciprocal Rank Fusion with theoretical-max normalization anchor
+- LLM top-K reranker — BM25 narrows to top-3 before LLM call; 93% token cost reduction; OOS fallback when no candidates score above zero
+- `EmbeddingProvider` interface — opt-in semantic similarity as third RRF signal; pre-encoded at construction, re-encoded on `loadManifest()`
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "capman",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Capability Manifest Engine — let AI agents interact with your app without navigating the UI",
   "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
@@ -49,14 +49,14 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.0.0",
-    "tsx": "^4.0.0",
-    "typescript": "^5.0.0",
-    "vitest": "^4.1.0"
+    "@types/node": "^20.19.43",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8"
   },
   "dependencies": {
-    "dotenv": "^17.3.1",
-    "fuse.js": "^7.3.0",
-    "zod": "^3.23.0"
+    "dotenv": "^17.4.2",
+    "fuse.js": "^7.4.2",
+    "zod": "^3.25.76"
   }
-}
+  }

@@ -376,13 +376,14 @@ async function resolveApi(
 }
 
 function validateNavParam(key: string, value: string): void {
-  // Allowlist aligned with validateApiPathParam — permits dots, colons, @ for
-  // deep links (myapp://path), domain-qualified values (auth.tokens), and
-  // versioned routes (v1:resource). Rejects path separators and shell metacharacters.
-  if (!/^[a-zA-Z0-9_\-.:@]+$/.test(value)) {
+  // Block path traversal only — the original allowlist also blocked spaces, which
+  // rejects legitimate natural-language params like city="New York" or name="John Smith".
+  // encodeURIComponent() safely encodes spaces and all special chars EXCEPT '/'.
+  // Slashes and dot-dot sequences are the only values that can escape the path segment.
+  if (value.includes('/') || value.includes('\\') || value.includes('..')) {
     throw new Error(
-      `Nav param "${key}" contains invalid characters: "${value}". ` +
-      `Only alphanumeric, hyphens, underscores, dots, colons, and @ are allowed.`
+      `Nav param "${key}" contains path traversal characters: "${value}". ` +
+      `Forward slashes, backslashes, and ".." sequences are not allowed.`
     )
   }
 }
@@ -404,11 +405,12 @@ function resolveNav(
 function validateApiPathParam(key: string, value: string): void {
   // Prevent path traversal via unencoded slashes — encodeURIComponent does not
   // encode '/' so a value like '../../admin' would traverse the path hierarchy.
-  // This mirrors the allowlist validation already applied in resolveNav().
-  if (!/^[a-zA-Z0-9_\-.:@]+$/.test(value)) {
+  // The original allowlist also blocked spaces, breaking params like name="John Smith".
+  // We target the actual threat (slashes, dot-dot) rather than whitelisting safe chars.
+  if (value.includes('/') || value.includes('\\') || value.includes('..')) {
     throw new Error(
-      `API path param "${key}" contains invalid characters: "${value}". ` +
-      `Only alphanumeric, hyphens, underscores, dots, colons, and @ are allowed.`
+      `API path param "${key}" contains path traversal characters: "${value}". ` +
+      `Forward slashes, backslashes, and ".." sequences are not allowed.`
     )
   }
 }

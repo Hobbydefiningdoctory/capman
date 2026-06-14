@@ -7,7 +7,7 @@ import type { Manifest } from '../src/types'
 const TMP_PATH = path.join(process.cwd(), 'tmp-test-manifest.json')
 
 const minimalManifest: Manifest = {
-  schemaVersion: '1',
+  schemaVersion: '1.0.0',
   version:       '0.0.0',
   app:           'test-app',
   generatedAt:   '2024-01-01T00:00:00.000Z',

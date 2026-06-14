@@ -735,7 +735,7 @@ export class CapmanEngine {
     // ── Schema version check ─────────────────────────────────────────────────
     // schemaVersion tracks manifest format — "1" for v0.6+.
     // Manifests without schemaVersion are pre-v0.6 — warn but allow.
-    const CURRENT_SCHEMA_VERSION = '1'
+    const CURRENT_SCHEMA_VERSION = '1.0.0'
     if (!manifest.schemaVersion) {
       console.warn(
         `[capman] Manifest is missing schemaVersion — it was generated with capman < 0.6. ` +

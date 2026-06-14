@@ -467,7 +467,7 @@ describe('resolve()', () => {
         { dryRun: true }
       )
       expect(result.success).toBe(false)
-      expect(result.error).toContain('invalid characters')
+      expect(result.error).toContain('path traversal characters')
     })
 
     it('allows dots and colons in nav params', async () => {
@@ -480,6 +480,19 @@ describe('resolve()', () => {
       expect(result.success).toBe(true)
       expect(result.navTarget).toBe('/v1%3Adashboard')
     })
+
+    it('allows spaces and multi-word values in nav params', async () => {
+      // Spaces are valid param values — encodeURIComponent handles them safely.
+      // The old allowlist incorrectly rejected params like city="New York".
+      const matchResult = match('Take me to dashboard', manifest)
+      const result = await resolve(
+        matchResult,
+        { destination: 'New York' },
+        { dryRun: true }
+      )
+      expect(result.success).toBe(true)
+      expect(result.navTarget).toContain('New%20York')
+    })
     
     it('rejects API path params with path traversal characters', async () => {
       const matchResult = match('Find resource by ID', manifest)
@@ -489,7 +502,7 @@ describe('resolve()', () => {
         { baseUrl: 'https://api.test.com', dryRun: true }
       )
       expect(result.success).toBe(false)
-      expect(result.error).toContain('invalid characters')
+      expect(result.error).toContain('path traversal characters')
     })
 
     it('rejects API path params with forward slash', async () => {
@@ -500,7 +513,7 @@ describe('resolve()', () => {
         { baseUrl: 'https://api.test.com', dryRun: true }
       )
       expect(result.success).toBe(false)
-      expect(result.error).toContain('invalid characters')
+      expect(result.error).toContain('path traversal characters')
     })
   })
 

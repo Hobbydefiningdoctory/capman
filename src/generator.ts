@@ -7,7 +7,7 @@ import { logger } from './logger'
 
 export function generate(config: CapmanConfig): Manifest {
   return {
-    schemaVersion: '1',
+    schemaVersion: '1.0.0',
     version:       VERSION,
     app:           config.app,
     generatedAt:   new Date().toISOString(),
