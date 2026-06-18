@@ -684,19 +684,25 @@ export function match(
       ...(fuzzyRanking.length     > 0 ? [fuzzyRanking]     : []),
       ...(embeddingRanking.length > 0 ? [embeddingRanking] : []),
     ]
-    const rrfScores = rrf(rankings, rrfK)
-    const theoreticalMax = rankings.length / (rrfK + 1)
+        // When only one signal is active, RRF collapses to a constant (rank-1 always
+        // scores theoreticalMax) — every matched capability reports 100% regardless of
+        // BM25 magnitude. Skip RRF in that case and use keyword scores directly.
+        const useRRF = rankings.length > 1
+        const rrfScores      = useRRF ? rrf(rankings, rrfK) : null
+        const theoreticalMax = useRRF ? rankings.length / (rrfK + 1) : 1
 
-      // Pre-compute rank maps — rank 0 = best. Used for accurate via attribution.
-      const rankIn = (list: Array<{ id: string; score: number }>, id: string): number => {
-        const idx = list.findIndex(e => e.id === id)
-        return idx === -1 ? Infinity : idx
-      }
+          // Pre-compute rank maps — rank 0 = best. Used for accurate via attribution.
+          const rankIn = (list: Array<{ id: string; score: number }>, id: string): number => {
+            const idx = list.findIndex(e => e.id === id)
+            return idx === -1 ? Infinity : idx
+          }
 
-      const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' | 'embedding' }> = []
-      for (const cap of manifest.capabilities) {
-        const rrfScore     = rrfScores.get(cap.id) ?? 0
-        const score        = Math.min(100, Math.round((rrfScore / theoreticalMax) * 100))
+          const allScores: Array<{ cap: Capability; score: number; via: 'keyword' | 'fuzzy' | 'embedding' }> = []
+          for (const cap of manifest.capabilities) {
+            const rrfScore = useRRF ? (rrfScores!.get(cap.id) ?? 0) : 0
+            const score    = useRRF
+              ? Math.min(100, Math.round((rrfScore / theoreticalMax) * 100))
+              : (keywordScoreMap.get(cap.id) ?? 0)
         const keywordScore = keywordScoreMap.get(cap.id) ?? 0
         const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
         const embScore     = options.embeddingScores?.get(cap.id) ?? 0

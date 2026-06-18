@@ -102,6 +102,29 @@ Pass any LLM — Anthropic, OpenAI, or anything that takes a string and returns 
 
 ---
 
+## Auth and Multi-User Servers
+
+For multi-user servers, always pass `auth` per request — never at engine construction time. A shared engine with one `auth` context serves every user as the same person.
+
+```typescript
+// ✓ Correct — per-request auth
+app.post('/ask', async (req, res) => {
+  const result = await engine.ask(req.body.query, {
+    auth:    { isAuthenticated: true, userId: req.user.id, role: req.user.role },
+    headers: { 'Authorization': `Bearer ${req.user.token}` },
+  })
+  res.json(result)
+})
+
+// ✗ Wrong for multi-user — engine shares one auth context across all callers
+const engine = new CapmanEngine({ manifest, auth: { isAuthenticated: true } })
+```
+
+**Important:** capman uses `auth` to gate whether a capability is allowed to run. It does **not** automatically forward credentials to your API. Add an `Authorization` header (or equivalent) via the `headers` override — your backend needs proof of who the caller is.
+
+
+---
+
 ## What You Get Back
 
 Every `ask()` call returns more than just an API result:

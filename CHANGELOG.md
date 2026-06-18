@@ -4,6 +4,24 @@ All notable changes to capman are documented here.
 
 ---
 
+## [0.6.3] — 2026-06-14
+
+### Fixed
+- `schemaVersion` now reads `"1.0.0"` instead of `"1"` — consistent with semver expectations across `generate()` output and the engine's manifest compatibility check. Manifests with the old `"1"` value trigger the existing mismatch warning and should be regenerated with `npx capman generate`
+- Updated development dependencies:
+  - `@types/node` → `^20.19.43`
+  - `tsx` → `^4.22.4`
+  - `typescript` → `^5.9.3`
+  - `vitest` → `^4.1.8`
+- Updated runtime dependencies:
+  - `dotenv` → `^17.4.2`
+  - `fuse.js` → `^7.4.2`
+  - `zod` → `^3.25.76`
+- Bumped Node.js to `v24`.
+- Bumped npm to `v11.13.0`.
+- Upgraded `vitest` to `^4.1.8`, resolving a transitive `esbuild`/`vite` security advisory in development dependencies. This change affects development tooling only and has no impact on the published package or downstream consumers.
+---
+
 ## [0.6.2] — 2026-05-26
 
 **Concurrency Safety**

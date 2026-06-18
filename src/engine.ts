@@ -426,6 +426,18 @@ export class CapmanEngine {
     // ── Step 2.5: Apply learning boost ───────────────────────────────────────
     matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
+    // ── Step 2.6: Merge known params ─────────────────────────────────────────
+    // Pre-known values override extraction entirely — the caller already knows
+    // the value (dropdown selection, prior capability result, webhook payload).
+    // This runs before missingParams computation (Step 5b), so a known param
+    // is never reported as missing.
+    if (overrides.knownParams && Object.keys(overrides.knownParams).length > 0) {
+      matchResult = {
+        ...matchResult,
+        extractedParams: { ...matchResult.extractedParams, ...overrides.knownParams },
+      }
+    }
+
     // ── Step 3: Privacy check ────────────────────────────────────────────────
     let privacyFailed = false
     if (matchResult.capability) {
@@ -666,6 +678,17 @@ export class CapmanEngine {
    */
   async clearCache() {
     if (this.cache) await this.cache.clear()
+  }
+
+  /**
+   * Manually reset the LLM circuit breaker.
+   * Use when the LLM provider has recovered and you want to restore LLM-mode
+   * matching without restarting the server.
+   */
+  resetCircuitBreaker(): void {
+    this.llmCircuitOpenAt    = 0
+    this.llmConsecutiveFails = 0
+    logger.info('LLM circuit breaker manually reset')
   }
 
   /**

@@ -12,6 +12,8 @@ const { command, header, log, c } = require('./lib/shared')
     case 'demo':     require('./lib/cmd-demo')();           break
     case 'run':      require('./lib/cmd-run')();            break
     case 'explain':  await require('./lib/cmd-explain')();  break
+    case 'test':     await require('./lib/cmd-test')();     break
+    case 'health':   await require('./lib/cmd-health')();   break
     case undefined:
     case '--help':
     case '-h':       require('./lib/cmd-help')();           break

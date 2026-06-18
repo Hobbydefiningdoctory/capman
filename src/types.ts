@@ -180,6 +180,9 @@ export interface Capability {
   description: string
   examples?:   string[]
   params:      CapabilityParam[]
+  /** Documentation only — not read by the engine, matcher, or resolver at runtime.
+   *  Describes what the API response contains. Useful for developer reference and
+   *  future response validation tooling. */
   returns:     string[]
   resolver:    Resolver
   privacy:     PrivacyScope

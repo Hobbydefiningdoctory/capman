@@ -16,12 +16,19 @@ export interface AuthContext {
   userId?: string
 }
 
-export interface ResolveOptions {
+  export interface ResolveOptions {
   baseUrl?: string
   fetch?: typeof globalThis.fetch
   dryRun?: boolean
   headers?: Record<string, string>
   auth?: AuthContext
+  /**
+    * Pre-known parameter values — skips extraction for these params and uses
+    * the given value directly. Useful when the agent already knows a value
+    * (e.g. from a dropdown selection, a prior capability result, or a webhook
+    * payload) rather than relying on extracting it from the query text.
+  */
+  knownParams?: Record<string, string>
   /** Number of retries on failure (default: 0) */
   retries?: number
   /** Timeout in milliseconds (default: 5000) */

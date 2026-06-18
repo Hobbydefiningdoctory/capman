@@ -4,8 +4,11 @@ const { header, log, c, args, posArgs, getFlag, requireSrc } = require('./shared
 
 module.exports = async function cmdExplain() {
   header()
-  const query = posArgs[0] ?? args[1]
+  const query        = posArgs[0] ?? args[1]
   const manifestPath = getFlag('--manifest') ?? 'manifest.json'
+  const jsonMode     = flags.includes('--json')
+  const modeFlag     = getFlag('--mode') ?? 'cheap'
+  const authFlag     = getFlag('--auth')
 
   if (!query) {
     log.error('Please provide a query.')
@@ -23,8 +26,15 @@ module.exports = async function cmdExplain() {
     process.exit(1)
   }
 
-  const engine = new CapmanEngine({ manifest, cache: false, learning: false, mode: 'cheap' })
-  const result = await engine.explain(query)
+  let auth
+  if (authFlag) {
+    try { auth = JSON.parse(authFlag) } catch {
+      log.error('--auth value must be valid JSON, e.g. \'{"isAuthenticated":true,"role":"admin"}\'')
+      process.exit(1)
+    }
+  }
+  const engine = new CapmanEngine({ manifest, cache: false, learning: false, mode: modeFlag })
+  const result = await engine.explain(query, ...(auth ? [{ auth }] : []))
 
   console.log(`\n  ${c.bold}QUERY${c.reset}`)
   console.log(`  "${c.bold}${query}${c.reset}"\n`)
@@ -68,5 +78,11 @@ module.exports = async function cmdExplain() {
     console.log(`  ${c.yellow}○  No action — query is out of scope${c.reset}`)
   }
   console.log()
-  console.log(`  ${c.gray}${result.durationMs}ms  ·  via ${result.resolvedVia}${c.reset}\n`)
+  if (jsonMode) {
+      console.log(JSON.stringify(result, null, 2))
+      return
+    }
+
+    console.log(`  ${c.gray}${result.durationMs}ms  ·  via ${result.resolvedVia}${c.reset}\n`)
+  }
 }

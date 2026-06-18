@@ -1,10 +1,11 @@
   'use strict'
 
-  const { header, log, c, getFlag, requireSrc } = require('./shared')
+const { header, log, c, flags, getFlag, requireSrc } = require('./shared')
 
-  module.exports = function cmdInspect() {
-    header()
-    const { readManifest } = requireSrc()
+    module.exports = function cmdInspect() {
+      const jsonMode = flags.includes('--json')
+      if (!jsonMode) header()
+      const { readManifest } = requireSrc()
 
     const manifestPath = getFlag('--manifest') ?? 'manifest.json'
     let manifest
@@ -15,6 +16,10 @@
       process.exit(1)
     }
 
+    if (jsonMode) {
+      console.log(JSON.stringify(manifest, null, 2))
+      return
+    }
     console.log(`${c.bold}  App:${c.reset}          ${manifest.app}`)
     console.log(`${c.bold}  Generated:${c.reset}    ${manifest.generatedAt}`)
     console.log(`${c.bold}  Capabilities:${c.reset} ${manifest.capabilities.length}`)

@@ -73,9 +73,14 @@ export class ConcurrentCapmanEngine {
     return this.engine.getTopCapabilities(limit)
   }
 
-/** Clear the cache. */
+  /** Clear the cache. */
   clearCache(): Promise<void> {
     return this.engine.clearCache()
+  }
+
+  /** Manually reset the LLM circuit breaker after provider recovery. */
+  resetCircuitBreaker(): void {
+    return this.engine.resetCircuitBreaker()
   }
 
   /** Returns engine health snapshot — circuit breaker, LLM rate limit, cache, learning, embedding. */

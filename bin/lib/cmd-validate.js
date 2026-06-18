@@ -1,12 +1,13 @@
 'use strict'
 
-const { header, log, c, getFlag, requireSrc } = require('./shared')
+const { header, log, c, flags, getFlag, requireSrc } = require('./shared')
 
-module.exports = function cmdValidate() {
-  header()
-  const { readManifest, validate } = requireSrc()
+  module.exports = function cmdValidate() {
+    const jsonMode = flags.includes('--json')
+    if (!jsonMode) header()
+    const { readManifest, validate } = requireSrc()
 
-  const manifestPath = getFlag('--manifest') ?? 'manifest.json'
+    const manifestPath = getFlag('--manifest') ?? 'manifest.json'
   let manifest
   try {
     manifest = readManifest(manifestPath)
@@ -15,8 +16,15 @@ module.exports = function cmdValidate() {
     process.exit(1)
   }
 
+const result = validate(manifest)
+
+  if (jsonMode) {
+    console.log(JSON.stringify({ valid: result.valid, errors: result.errors, warnings: result.warnings }, null, 2))
+    if (!result.valid) process.exit(1)
+    return
+  }
+
   log.info(`Validating ${c.bold}${manifestPath}${c.reset}...`)
-  const result = validate(manifest)
   log.blank()
 
   for (const w of result.warnings) log.warn(w)
