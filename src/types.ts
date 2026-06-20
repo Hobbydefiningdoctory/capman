@@ -88,6 +88,14 @@ export type Resolver = ApiResolver | NavResolver | HybridResolver
 
 export interface PrivacyScope {
   level: 'public' | 'user_owned' | 'admin'
+  /**
+   * Optional fine-grained role requirement — checked in addition to `level`.
+   * Caller's auth.roles must include AT LEAST ONE of these to pass.
+   * Independent of `level`: e.g. level: 'user_owned' + requiredRoles: ['billing_admin']
+   * means "any authenticated user with the billing_admin role."
+   * Omit to use level-only enforcement (unchanged from before this field existed).
+   */
+  requiredRoles?: string[]
   note?: string
 }
 

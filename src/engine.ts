@@ -7,11 +7,32 @@ import type { EmbeddingProvider } from './types'
 import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, filterByTags, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
-import { logger } from './logger'
+import { logger, type CapmanLogger } from './logger'
 import type { MatchMode } from './types'
 import { MemoryCache, normalizeQuery, buildCacheKey } from './cache'
 import { VERSION } from './version'
 
+export interface EngineHooks {
+    /** Fires after matching completes, before privacy check. Observational — cannot alter the match. */
+  onMatch?: (info: { query: string; capabilityId: string | null; confidence: number; resolvedVia: 'cache' | 'keyword' | 'llm' }) => void
+  /**
+   * Custom privacy check — REPLACES the built-in level/requiredRoles check for
+   * every capability when provided. Return null to allow, a string to deny.
+   * The resolver's own internal check is skipped when onAuth is used, so
+   * onAuth's decision is the single source of truth — it can both allow
+   * things the built-in check would deny, and deny things it would allow.
+   */
+  onAuth?: (capability: Capability, auth: AuthContext | undefined) => string | null | Promise<string | null>
+    /** Fires when privacy check (built-in or onAuth) denies access. */
+  onPrivacyDenied?: (capabilityId: string, reason: string) => void
+    /** Fires immediately before the resolver executes. Does not fire on cache hits or privacy denial. */
+  onBeforeResolve?: (capability: Capability, params: Record<string, unknown>) => void
+    /** Fires after resolution completes, success or failure. Does not fire on cache hits. */
+  onResolved?: (capabilityId: string, result: ResolveResult) => void
+    /** Fires on unhandled errors during ask(). LLM retry/circuit-breaker failures are handled internally and do not trigger this. */
+  onError?: (error: Error, context: { query: string; step: string }) => void
+  }
+  
 // ─── Engine Options ───────────────────────────────────────────────────────────
 
 /**
@@ -210,6 +231,15 @@ export interface EngineOptions {
    * falls back to BM25 + fuzzy scoring without interrupting operation.
    */
   embedding?: EmbeddingProvider
+  /**
+   * Custom logger — routes all capman log output through your own logging
+   * infrastructure instead of console.*. Log level is still controlled by
+   * setLogLevel() — this only changes where filtered output is sent, not
+   * which messages pass the filter. Global, not per-instance — see Logger.setSink().
+   */
+  logger?: CapmanLogger
+  /** Lifecycle event hooks — observe or (via onAuth) override engine behavior. All optional. */
+  hooks?: EngineHooks
 }
 
 // ─── Engine Result ────────────────────────────────────────────────────────────
@@ -258,6 +288,7 @@ export class CapmanEngine {
   private adaptiveMargin:    number
   private environment?:     string
   private llmTagFilter?:    string[]
+  private hooks:            EngineHooks
   private embedding?:       EmbeddingProvider
   private capEmbeddings?:   number[][]   // pre-encoded capability texts, parallel to manifest.capabilities
   /** Resolves when the post-loadManifest re-encode completes. Awaited by buildEmbeddingScores(). */
@@ -318,6 +349,9 @@ export class CapmanEngine {
     : (options.learning ?? new MemoryLearningStore(options.learningHalfLifeDays ?? 30))
 
     this.llmTagFilter = options.llmTagFilter
+    this.hooks         = options.hooks ?? {}
+    if (options.logger) logger.setSink(options.logger)
+    
     this.embedding = options.embedding
     if (this.embedding) {
       // Pre-encode all capability texts at construction time — one batch call.
@@ -359,6 +393,11 @@ export class CapmanEngine {
     // Capture manifest version at entry — used to guard the cache write.
     // If loadManifest() is called mid-flight, we skip writing stale results.
     const manifestVersion = this.manifestVersion
+    // Per-call auth override takes precedence over engine-level auth — this is
+    // what makes the canonical multi-user server pattern
+    // (engine.ask(query, { auth: req.user })) actually work. Previously the
+    // privacy check (Step 3) used only this.auth, silently ignoring overrides.auth.
+    const effectiveAuth = overrides.auth ?? this.auth
 
     // ── Step 1: Check cache ──────────────────────────────────────────────────
     const cacheStart = Date.now()
@@ -423,10 +462,10 @@ export class CapmanEngine {
     // copy makes the invariant clear and safe against future in-place mutation.
     const preBoostMatchResult = { ...matchResult, candidates: matchResult.candidates.slice() }
 
-    // ── Step 2.5: Apply learning boost ───────────────────────────────────────
+    // ── Step 2.a: Apply learning boost ───────────────────────────────────────
     matchResult = await this.applyBoostToMatchResult(query, matchResult, resolvedVia)
 
-    // ── Step 2.6: Merge known params ─────────────────────────────────────────
+    // ── Step 2.b: Merge known params ─────────────────────────────────────────
     // Pre-known values override extraction entirely — the caller already knows
     // the value (dropdown selection, prior capability result, webhook payload).
     // This runs before missingParams computation (Step 5b), so a known param
@@ -438,10 +477,34 @@ export class CapmanEngine {
       }
     }
 
+    // ── Step 2.c: onMatch hook ───────────────────────────────────────────────
+    if (this.hooks.onMatch) {
+      try {
+        this.hooks.onMatch({
+          query,
+          capabilityId: matchResult.capability?.id ?? null,
+          confidence:   matchResult.confidence,
+          resolvedVia,
+        })
+      } catch (err) {
+        logger.warn(`onMatch hook threw: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
     // ── Step 3: Privacy check ────────────────────────────────────────────────
     let privacyFailed = false
+    // Lifted to outer scope so Step 4b can pass the already-computed onAuth
+    // verdict into resolve() — avoids the resolver's independent built-in
+    // check potentially disagreeing with a custom onAuth decision. Only set
+    // when onAuth was actually used; the normal (non-onAuth) path leaves this
+    // undefined, so the resolver still runs its own built-in check as usual
+    // (defense-in-depth preserved for the default, most common path).
+    let onAuthVerdict: string | null | undefined = undefined
     if (matchResult.capability) {
-      const privacyError = checkPrivacy(matchResult.capability, this.auth)
+      const privacyError = this.hooks.onAuth
+        ? await this.hooks.onAuth(matchResult.capability, effectiveAuth)
+        : checkPrivacy(matchResult.capability, effectiveAuth)
+      if (this.hooks.onAuth) onAuthVerdict = privacyError
       steps.push({
         type:      'privacy_check',
         status:    privacyError ? 'fail' : 'pass',
@@ -453,11 +516,14 @@ export class CapmanEngine {
       this.checkCapabilityLifecycle(matchResult.capability)
       // Log when engine mode differs from capability's preferred mode
       this.checkMatchHint(matchResult.capability)
-      
-      // Short-circuit: if privacy fails, skip disambiguation to avoid burning an LLM
-      // call on a request that _resolve() will block anyway. privacyFailed propagates
-      // to Step 4a so the mode guard check is clean and explicit.
-      if (privacyError) privacyFailed = true
+
+      if (privacyError) {
+        privacyFailed = true
+        if (this.hooks.onPrivacyDenied) {
+          try { this.hooks.onPrivacyDenied(matchResult.capability.id, privacyError) }
+          catch (err) { logger.warn(`onPrivacyDenied hook threw: ${err instanceof Error ? err.message : String(err)}`) }
+        }
+      }
     }
     
     // ── Step 4a: Compute verdict + optional margin-aware LLM disambiguation ──
@@ -478,11 +544,16 @@ export class CapmanEngine {
     }
 
     // ── Step 4b: Resolve ──────────────────────────────────────────────────────
+    if (this.hooks.onBeforeResolve && matchResult.capability) {
+      try { this.hooks.onBeforeResolve(matchResult.capability, matchResult.extractedParams as Record<string, unknown>) }
+      catch (err) { logger.warn(`onBeforeResolve hook threw: ${err instanceof Error ? err.message : String(err)}`) }
+    }
     const resolveStart = Date.now()
     const resolution = await _resolve(
       matchResult,
       matchResult.extractedParams as Record<string, unknown>,
-      this.resolveOptions(overrides)
+      this.resolveOptions(overrides),
+      onAuthVerdict
     )
     steps.push({
       type: 'resolve',
@@ -490,6 +561,10 @@ export class CapmanEngine {
       durationMs: Date.now() - resolveStart,
       detail: resolution.error ?? `via ${resolution.resolverType}`,
     })
+    if (this.hooks.onResolved && matchResult.capability) {
+      try { this.hooks.onResolved(matchResult.capability.id, resolution) }
+      catch (err) { logger.warn(`onResolved hook threw: ${err instanceof Error ? err.message : String(err)}`) }
+    }
     
     // ── Step 5: Cache after successful resolution ────────────────────────────
     // Write under two keys:

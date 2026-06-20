@@ -10,8 +10,12 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 export interface AuthContext {
   /** Whether the current request is authenticated */
   isAuthenticated: boolean
-  /** Current user's role */
+  /** @deprecated Use `roles` instead. Kept for backward compatibility —
+   *  checkPrivacy() treats a single `role` as equivalent to `roles: [role]`
+   *  when `roles` is not provided. */
   role?: 'user' | 'admin'
+  /** Current user's roles — supports multi-role auth, e.g. ['user', 'billing_admin']. */
+  roles?: string[]
   /** Current user's ID — injected into session params */
   userId?: string
 }
@@ -48,39 +52,58 @@ function redactParams(params: Record<string, unknown>): Record<string, string> {
   )
 }
 
-export function checkPrivacy(
-  capability: Capability,
-  auth?: AuthContext
-): string | null {
-  const level = capability.privacy.level
+  export function checkPrivacy(
+    capability: Capability,
+    auth?: AuthContext
+  ): string | null {
+    const level = capability.privacy.level
 
-  if (level === 'public') return null
-
-  if (level === 'user_owned') {
-    if (!auth?.isAuthenticated) {
-      return `Capability "${capability.id}" requires authentication (privacy: user_owned)`
+    // requiredRoles is checked regardless of level — including 'public'. A public
+    // capability with requiredRoles set means "anyone can attempt this, but only
+    // certain roles actually pass" — level and requiredRoles are independent axes,
+    // so 'public' must not early-return before the role check runs.
+    if (level === 'user_owned') {
+      if (!auth?.isAuthenticated) {
+        return `Capability "${capability.id}" requires authentication (privacy: user_owned)`
+      }
     }
+
+    if (level === 'admin') {
+      if (!auth?.isAuthenticated) {
+        return `Capability "${capability.id}" requires authentication (privacy: admin)`
+      }
+      if (auth.role !== 'admin') {
+        return `Capability "${capability.id}" requires admin role (current role: ${auth.role ?? 'none'})`
+      }
+    }
+
+    if (capability.privacy.requiredRoles?.length) {
+      const callerRoles = auth?.roles ?? (auth?.role ? [auth.role] : [])
+      const hasRequiredRole = capability.privacy.requiredRoles.some(r => callerRoles.includes(r))
+      if (!hasRequiredRole) {
+        return `Capability "${capability.id}" requires one of roles [${capability.privacy.requiredRoles.join(', ')}] (current roles: ${callerRoles.join(', ') || 'none'})`
+      }
+    }
+
     return null
-  }
-
-  if (level === 'admin') {
-    if (!auth?.isAuthenticated) {
-      return `Capability "${capability.id}" requires authentication (privacy: admin)`
-    }
-    if (auth.role !== 'admin') {
-      return `Capability "${capability.id}" requires admin role (current role: ${auth.role ?? 'none'})`
-    }
-    return null
-  }
-
-  return null
 }
 
 
 export async function resolve(
   matchResult: MatchResult,
   params: Record<string, unknown> = {},
-  options: ResolveOptions = {}
+  options: ResolveOptions = {},
+   /**
+   * Internal use only — not part of the public resolve() contract via
+   * ResolveOptions, deliberately, so a normal caller cannot accidentally
+   * bypass privacy enforcement by setting a field on an options object.
+   * When provided (including null), this value is used instead of calling
+   * checkPrivacy() internally. Used by CapmanEngine when EngineHooks.onAuth
+   * has already computed the privacy verdict, so the decision is made
+   * exactly once rather than potentially disagreeing with the resolver's
+   * own independent built-in check.
+   */
+  precomputedPrivacyError?: string | null
 ): Promise<ResolveResult> {
   const { capability } = matchResult
 
@@ -93,8 +116,10 @@ export async function resolve(
     }
   }
 
-  // ── Privacy enforcement ──────────────────────────────────────────────────
-  const privacyError = checkPrivacy(capability, options.auth)
+    // ── Privacy enforcement ──────────────────────────────────────────────────
+  const privacyError = precomputedPrivacyError !== undefined
+    ? precomputedPrivacyError
+    : checkPrivacy(capability, options.auth)
   if (privacyError) {
     logger.warn(`Privacy check failed: ${privacyError}`)
     return {

@@ -54,6 +54,7 @@ export type { LLMMatcherOptions } from './matcher'
 export { TYPE_PATTERNS } from './matcher'
 export { filterByTags } from './matcher'
 export type { LLMMessage } from './matcher'
+export type { CapmanLogger } from './logger'
 
 export { resolve } from './resolver'
 export type { ResolveOptions, AuthContext } from './resolver'
@@ -61,7 +62,7 @@ export type { ResolveOptions, AuthContext } from './resolver'
 // ─── Engine (recommended API) ─────────────────────────────────────────────────
 export { CapmanEngine } from './engine'
 export { ConcurrentCapmanEngine } from './concurrent'
-export type { EngineOptions, EngineResult } from './engine'
+export type { EngineOptions, EngineResult, EngineHooks } from './engine'
 
 // ─── Cache ────────────────────────────────────────────────────────────────────
 export { MemoryCache, FileCache, ComboCache, buildCacheKey, normalizeQuery } from './cache'

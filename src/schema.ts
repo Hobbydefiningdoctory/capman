@@ -58,6 +58,7 @@ const ResolverSchema = z.discriminatedUnion('type', [
 
 const PrivacyScopeSchema = z.object({
   level: z.enum(['public', 'user_owned', 'admin']),
+  requiredRoles: z.array(z.string().min(1)).optional(),
   note:  z.string().optional(),
 })
 
