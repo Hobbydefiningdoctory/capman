@@ -1,6 +1,6 @@
 'use strict'
 
-const { header, log, c, args, posArgs, getFlag, requireSrc } = require('./shared')
+const { header, log, c, args, posArgs, flags, getFlag, requireSrc } = require('./shared')
 
 module.exports = async function cmdExplain() {
   header()
@@ -84,5 +84,4 @@ module.exports = async function cmdExplain() {
     }
 
     console.log(`  ${c.gray}${result.durationMs}ms  ·  via ${result.resolvedVia}${c.reset}\n`)
-  }
 }

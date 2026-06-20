@@ -539,32 +539,40 @@ export interface MatchOptions {
   bm25Index?:      BM25Index   // pre-built index — pass from CapmanEngine for performance
   bm25K1?:         number      // TF saturation (default: 1.5)
   bm25B?:          number      // length normalization (default: 0.75)
-  bm25Ceiling?:    number      // normalization ceiling — pre-calibrated by CapmanEngine
+  bm25Ceiling?:    Map<string, number>  // per-capability normalization ceiling — pre-calibrated by CapmanEngine
   /** Pre-computed cosine similarity scores keyed by capability ID (0–100). Engine passes these when an EmbeddingProvider is configured. */
   embeddingScores?: Map<string, number>
 }
 
-/**
- * Calibrates a BM25 normalization ceiling from the manifest.
- * Scores each capability against all of its own examples and returns the maximum.
- * Call once at manifest load time — O(capabilities × examples).
- */
 export function calibrateCeiling(
   capabilities: Capability[],
   bm25Index: BM25Index,
   k1: number,
   b: number
-): number {
-  let max = 0
+): Map<string, number> {
+  const ceilings = new Map<string, number>()
   for (const cap of capabilities) {
-    // Calibrate from name + full description — longer text that better represents
-    // real query complexity. Short auto-generated examples (2-4 words) produce
-    // a low ceiling that clamps most real queries to 100%, destroying ranking.
-    const selfWords = new Set(tokenize(cap.name + ' ' + cap.description))
-    const raw = scoreCapability(selfWords, cap, bm25Index, k1, b)
-    if (raw > max) max = raw
+    let max = 0
+    // Calibrate against the capability's OWN examples — the same signal a real
+    // query is expected to resemble, scored through the identical weighted
+    // BM25 function used at match time (examples 0.6, description 0.3, name 0.1).
+    // This keeps calibration aligned with what's actually measured — a capability
+    // is never inflated or suppressed just because its description happens to be
+    // longer or shorter than another capability's.
+    for (const example of cap.examples ?? []) {
+      const exWords = new Set(tokenize(example))
+      const raw = scoreCapability(exWords, cap, bm25Index, k1, b)
+      if (raw > max) max = raw
+    }
+    // Fallback for capabilities with no examples — name+description probe,
+    // since there's no example signal available to calibrate against.
+    if (max === 0) {
+      const selfWords = new Set(tokenize(cap.name + ' ' + cap.description))
+      max = scoreCapability(selfWords, cap, bm25Index, k1, b)
+    }
+    ceilings.set(cap.id, max > 0 ? max : 100)
   }
-  return max > 0 ? max : 100
+  return ceilings
 }
 
 export function match(
@@ -650,30 +658,53 @@ export function match(
       const k1        = options.bm25K1 ?? 1.5
       const b         = options.bm25B  ?? 0.75
 
-      // Calibrate ceiling — max self-score for normalization
-  const ceiling = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
+  // Calibrate per-capability ceilings for normalization
+  const ceilings = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
 
-    // Build per-source ranked lists for RRF fusion
-    const keywordRanking:   Array<{ id: string; score: number }> = []
-    const fuzzyRanking:     Array<{ id: string; score: number }> = []
-    const embeddingRanking: Array<{ id: string; score: number }> = []
-    const keywordScoreMap = new Map<string, number>()
+  // Build per-source ranked lists for RRF fusion
+  const keywordRanking:   Array<{ id: string; score: number }> = []
+  const fuzzyRanking:     Array<{ id: string; score: number }> = []
+  const embeddingRanking: Array<{ id: string; score: number }> = []
+  const keywordScoreMap = new Map<string, number>()
 
-    for (const cap of manifest.capabilities) {
-      const rawBM25      = scoreCapability(qWordSet, cap, bm25Index, k1, b)
-      const bm25Score    = Math.min(100, Math.round((rawBM25 / ceiling) * 100))
-      const bonusPoints  = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
-      // Demote deprecated capabilities — still discoverable for informational queries
-      // ("what replaced post_charges?") but ranked last vs active alternatives.
-      const depPenalty   = cap.lifecycle?.status === 'deprecated' ? 0.3 : 1
-      const keywordScore = Math.min(100, Math.round((bm25Score + bonusPoints) * depPenalty))
-      const fuzzyScore   = fuzzyScoreMap.get(cap.id) ?? 0
-      const embScore     = options.embeddingScores?.get(cap.id) ?? 0
-      if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
-      keywordScoreMap.set(cap.id, keywordScore)
-      if (fuzzyScore > 0) fuzzyRanking.push({ id: cap.id, score: fuzzyScore })
-      if (embScore   > 0) embeddingRanking.push({ id: cap.id, score: embScore })
+  // Pass 1 — compute every capability's raw keyword score undiminished.
+  // Deprecation demotion is relative (it only means something when there's an
+  // active alternative to lose to), so it cannot be applied per-capability in
+  // isolation — it needs visibility into the full set of scores first.
+  const rawKeywordScores = new Map<string, number>()
+  for (const cap of manifest.capabilities) {
+    const rawBM25     = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+    const capCeiling  = ceilings.get(cap.id) ?? 100
+    const bm25Score   = Math.min(100, Math.round((rawBM25 / capCeiling) * 100))
+    const bonusPoints = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
+    rawKeywordScores.set(cap.id, Math.min(100, Math.round(bm25Score + bonusPoints)))
+  }
+
+  // Best score among ACTIVE (non-deprecated) capabilities — the demotion ceiling.
+  let bestActiveScore = 0
+  for (const cap of manifest.capabilities) {
+    if (cap.lifecycle?.status === 'deprecated') continue
+    const s = rawKeywordScores.get(cap.id) ?? 0
+    if (s > bestActiveScore) bestActiveScore = s
+  }
+
+  // Pass 2 — apply relative demotion to deprecated capabilities, then build rankings.
+  for (const cap of manifest.capabilities) {
+    const raw = rawKeywordScores.get(cap.id) ?? 0
+    let keywordScore = raw
+    if (cap.lifecycle?.status === 'deprecated' && bestActiveScore > 0) {
+      // Demote just enough to lose to the best active competitor, never below
+      // what this capability would have scored as the only candidate ("still
+      // discoverable" — demotion is relative, not an absolute confidence tax).
+      keywordScore = Math.min(raw, Math.max(0, bestActiveScore - 1))
     }
+    const fuzzyScore = fuzzyScoreMap.get(cap.id) ?? 0
+    const embScore    = options.embeddingScores?.get(cap.id) ?? 0
+    if (keywordScore > 0) keywordRanking.push({ id: cap.id, score: keywordScore })
+    keywordScoreMap.set(cap.id, keywordScore)
+    if (fuzzyScore > 0) fuzzyRanking.push({ id: cap.id, score: fuzzyScore })
+    if (embScore   > 0) embeddingRanking.push({ id: cap.id, score: embScore })
+  }
 
     // RRF fusion. Anchor to theoretical max — a rank-1 entry in all lists scores
     // rankings.length/(k+1). Using observed max instead inflates zero-overlap queries

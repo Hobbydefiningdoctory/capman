@@ -251,7 +251,7 @@ export class CapmanEngine {
   private fuzzyMatch:     boolean
   private fuzzyThreshold: number
   private bm25Index:   BM25Index
-  private bm25Ceiling: number
+  private bm25Ceiling: Map<string, number>
   private bm25K1:      number
   private bm25B:       number
   private marginAwareLLM:    boolean
@@ -1476,7 +1476,7 @@ export class CapmanEngine {
     })
   }
 
-  private calibrateBM25Ceiling(): number {
+  private calibrateBM25Ceiling(): Map<string, number> {
     return _calibrateCeiling(this.manifest.capabilities, this.bm25Index, this.bm25K1, this.bm25B)
   }
 
