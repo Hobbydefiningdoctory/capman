@@ -4,7 +4,7 @@ import type { ResolveOptions, AuthContext } from './resolver'
 import type { CacheStore } from './cache'
 import type { LearningStore, LearningEntry} from './learning'
 import type { EmbeddingProvider } from './types'
-import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, filterByTags, type BM25Index, calibrateCeiling as _calibrateCeiling } from './matcher'
+import { match as _match, matchWithLLM as _matchWithLLM, resolverToIntent, extractParams, STOPWORDS, LLMParseError, tokenize, buildBM25Index, scoreCapability as _scoreCapability, sanitizeForPrompt, filterByTags, type BM25Index, calibrateCeiling as _calibrateCeiling, calibrateExampleCeilings as _calibrateExampleCeilings } from './matcher'
 import { resolve as _resolve, checkPrivacy } from './resolver'
 import { MemoryLearningStore } from './learning'
 import { logger, type CapmanLogger } from './logger'
@@ -282,6 +282,7 @@ export class CapmanEngine {
   private fuzzyThreshold: number
   private bm25Index:   BM25Index
   private bm25Ceiling: Map<string, number>
+  private bm25ExampleCeilings: Map<string, number[]>
   private bm25K1:      number
   private bm25B:       number
   private marginAwareLLM:    boolean
@@ -327,6 +328,7 @@ export class CapmanEngine {
     this.bm25K1    = options.bm25K1 ?? 1.5
     this.bm25B     = options.bm25B  ?? 0.75
     this.bm25Index = buildBM25Index(options.manifest.capabilities)
+    this.bm25ExampleCeilings = this.calibrateBM25ExampleCeilings()
     this.bm25Ceiling = this.calibrateBM25Ceiling()
     this.marginAwareLLM = options.marginAwareLLM ?? false
     this.adaptiveMargin = options.adaptiveMarginOverride ?? 20  // safe fallback
@@ -499,12 +501,23 @@ export class CapmanEngine {
     // when onAuth was actually used; the normal (non-onAuth) path leaves this
     // undefined, so the resolver still runs its own built-in check as usual
     // (defense-in-depth preserved for the default, most common path).
-    let onAuthVerdict: string | null | undefined = undefined
-    if (matchResult.capability) {
-      const privacyError = this.hooks.onAuth
-        ? await this.hooks.onAuth(matchResult.capability, effectiveAuth)
-        : checkPrivacy(matchResult.capability, effectiveAuth)
-      if (this.hooks.onAuth) onAuthVerdict = privacyError
+      let onAuthVerdict: string | null | undefined = undefined
+      if (matchResult.capability) {
+        let privacyError: string | null
+        if (this.hooks.onAuth) {
+          // Fail-closed: onAuth is a security decision. If it throws, treat the
+          // capability as denied rather than crashing ask() or silently allowing
+          // access — the opposite default (fail-open) would be unsafe.
+          try {
+            privacyError = await this.hooks.onAuth(matchResult.capability, effectiveAuth)
+          } catch (err) {
+            logger.warn(`onAuth hook threw — denying access (fail-closed): ${err instanceof Error ? err.message : String(err)}`)
+            privacyError = `Capability "${matchResult.capability.id}" denied — onAuth hook threw an error`
+          }
+          onAuthVerdict = privacyError
+        } else {
+          privacyError = checkPrivacy(matchResult.capability, effectiveAuth)
+        }
       steps.push({
         type:      'privacy_check',
         status:    privacyError ? 'fail' : 'pass',
@@ -973,6 +986,7 @@ export class CapmanEngine {
   // must never see a new manifest paired with a stale bm25Index or ceiling.
   this.manifest       = manifest
   this.bm25Index      = buildBM25Index(manifest.capabilities)
+  this.bm25ExampleCeilings = this.calibrateBM25ExampleCeilings()
   this.bm25Ceiling    = this.calibrateBM25Ceiling()
   this.adaptiveMargin = 20
     setImmediate(() => { this.adaptiveMargin = this.calibrateAdaptiveMargin() })
@@ -1253,6 +1267,7 @@ export class CapmanEngine {
         bm25K1:         this.bm25K1,
         bm25B:          this.bm25B,
         bm25Ceiling:    this.bm25Ceiling,
+        bm25ExampleCeilings: this.bm25ExampleCeilings,
         embeddingScores,
       }
       
@@ -1551,8 +1566,16 @@ export class CapmanEngine {
     })
   }
 
+  private calibrateBM25ExampleCeilings(): Map<string, number[]> {
+    return _calibrateExampleCeilings(this.manifest.capabilities, this.bm25Index, this.bm25K1, this.bm25B)
+  }
+
   private calibrateBM25Ceiling(): Map<string, number> {
-    return _calibrateCeiling(this.manifest.capabilities, this.bm25Index, this.bm25K1, this.bm25B)
+    // Example ceilings must already be set (this.bm25ExampleCeilings) before
+    // this runs — calibrateCeiling() depends on them for a coherent overall
+    // per-capability ceiling. Both constructor and loadManifest() call
+    // calibrateBM25ExampleCeilings() immediately before this method.
+    return _calibrateCeiling(this.manifest.capabilities, this.bm25Index, this.bm25K1, this.bm25B, this.bm25ExampleCeilings)
   }
 
   /**
@@ -1579,6 +1602,7 @@ export class CapmanEngine {
       fuzzyMatch:     false,  // calibration uses keyword only — deterministic
       bm25Index:      this.bm25Index,
       bm25Ceiling:    this.bm25Ceiling,
+      bm25ExampleCeilings: this.bm25ExampleCeilings,
       bm25K1:         this.bm25K1,
       bm25B:          this.bm25B,
     }

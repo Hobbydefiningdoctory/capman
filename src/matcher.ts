@@ -146,55 +146,79 @@ export function tokenize(text: string): string[] {
 
 // ─── BM25 Index ───────────────────────────────────────────────────────────────
 
-export interface BM25Index {
-  /** Document frequency — how many capabilities contain each term */
-  df:    Record<string, number>
-  /** Average field length per field type */
-  avgdl: { examples: number; description: number; name: number }
-  /** Total number of capabilities */
-  N:     number
-  /** Bigram sets per capability — post-stopword, post-stem, examples only */
-  bigrams: Record<string, Set<string>>
-  /**
-   * Pre-computed token arrays per capability, per field.
-   * Avoids re-tokenizing capability text on every scoreCapability() call.
-   * At 50 capabilities × 100 req/s, that is 5,000 redundant tokenization
-   * calls per second — each involving stem() and split/filter chains.
-   */
-  capTokens: Record<string, { examples: string[]; description: string[]; name: string[] }>
+  export interface BM25Index {
+    /** Document frequency — how many capabilities contain each term */
+    df:    Record<string, number>
+    /** Average field length per field type (description/name — per-capability combined field) */
+    avgdl: { examples: number; description: number; name: number }
+    /**
+     * Average length of a SINGLE example across the whole corpus — distinct from
+     * avgdl.examples (which is the average COMBINED-examples-field length per
+     * capability). Used for per-example BM25 length normalization, so a capability
+     * with many examples doesn't get its document-length penalty computed against
+     * an unrelated combined-field average. See scoreExamplesField().
+     */
+    avgdlPerExample: number
+    /** Total number of capabilities */
+    N:     number
+    /** Bigram sets per capability — post-stopword, post-stem, examples only */
+    bigrams: Record<string, Set<string>>
+    /**
+     * Pre-computed token arrays per capability, per field.
+     * `examples` is now an array of per-example token arrays (one per cap.examples
+     * entry) rather than one combined/joined array — required for per-example
+     * scoring. Avoids re-tokenizing capability text on every scoreCapability() call.
+     */
+    capTokens: Record<string, { examples: string[][]; description: string[]; name: string[] }>
 }
 
 /** Build a BM25 index over all capabilities. Call once at manifest load. */
 export function buildBM25Index(capabilities: Capability[]): BM25Index {
   const N = capabilities.length
-  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, N: 0, bigrams: {}, capTokens: {}, }
+  if (N === 0) return { df: {}, avgdl: { examples: 0, description: 0, name: 0 }, avgdlPerExample: 1, N: 0, bigrams: {}, capTokens: {}, }
 
   const df: Record<string, number> = {}
   let totalExLen = 0
   let totalDescLen = 0
   let totalNameLen = 0
+  let totalExampleTokenSum = 0   // sum of EACH example's own length (not combined-field length)
+  let totalExampleCount    = 0   // total number of individual examples across the whole corpus
 
   // Pre-compute token arrays for every capability in a single pass.
   // scoreCapability() reads from capTokens instead of re-tokenizing on every call.
   const capTokens: BM25Index['capTokens'] = {}
 
   for (const cap of capabilities) {
-    const exTokens   = tokenize((cap.examples ?? []).join(' '))
+    // Per-example token arrays — preserves example boundaries instead of
+    // joining into one combined field. Required for per-example BM25 scoring.
+    const exTokensPerExample = (cap.examples ?? []).map(ex => tokenize(ex))
+    const exTokensCombined   = exTokensPerExample.flat()   // for df counting + avgdl.examples (legacy combined-field stat)
     const descTokens = tokenize(cap.description)
     const nameTokens = tokenize(cap.name)
 
-    capTokens[cap.id] = { examples: exTokens, description: descTokens, name: nameTokens }
+    capTokens[cap.id] = { examples: exTokensPerExample, description: descTokens, name: nameTokens }
 
-    totalExLen   += exTokens.length
+    totalExLen   += exTokensCombined.length
     totalDescLen += descTokens.length
     totalNameLen += nameTokens.length
 
+    for (const exTokens of exTokensPerExample) {
+      totalExampleTokenSum += exTokens.length
+      totalExampleCount++
+    }
+
     // Count document frequency — each term counted once per capability
+    // (deduplicated across ALL of a capability's examples + description + name).
+    // This stays per-capability, not per-example — changing this to per-example
+    // df collapses IDF for any capability with more than one example sharing
+    // vocabulary, since df can then equal or exceed N within a single capability.
     const seen = new Set<string>()
-    for (const t of [...exTokens, ...descTokens, ...nameTokens]) {
+    for (const t of [...exTokensCombined, ...descTokens, ...nameTokens]) {
       if (!seen.has(t)) { df[t] = (df[t] ?? 0) + 1; seen.add(t) }
     }
   }
+
+  const avgdlPerExample = totalExampleCount > 0 ? totalExampleTokenSum / totalExampleCount : 1
 
   // Build bigram sets per capability — examples field only
   // Clean bigrams only: post-stopword, post-stem tokens
@@ -214,6 +238,7 @@ export function buildBM25Index(capabilities: Capability[]): BM25Index {
       description: totalDescLen / N,
       name:        totalNameLen / N,
     },
+    avgdlPerExample,
     N,
     bigrams,
     capTokens,
@@ -230,23 +255,98 @@ export function scoreCapability(
   cap:      Capability,
   index:    BM25Index,
   k1 = 1.5,
-  b  = 0.75
+  b  = 0.75,
+  /**
+   * Per-example ceilings for this capability, parallel to cap.examples.
+   * When provided, the examples field score is normalized per-example before
+   * weighting (see scoreExamplesField). When omitted, falls back to an
+   * unnormalized raw examples score — used only by calibrateExampleCeilings()
+   * itself while computing these ceilings (avoids infinite recursion).
+   */
+  exampleCeilings?: number[]
 ): number {
   if (index.N === 0) return 0
 
-  // Use pre-computed token arrays from the index — avoids re-tokenizing
-  // capability text on every call. Falls back to live tokenization only when
-  // scoreCapability() is called outside CapmanEngine (e.g. unit tests that
-  // build a BM25Index manually without capTokens populated).
   const tokens = index.capTokens[cap.id]
-  const exTokens   = tokens?.examples    ?? tokenize((cap.examples ?? []).join(' '))
   const descTokens = tokens?.description ?? tokenize(cap.description)
   const nameTokens = tokens?.name        ?? tokenize(cap.name)
 
-  const score = bm25Field(qWordSet, exTokens,   index, 'examples',    k1, b) * 0.6
+  const exScore = scoreExamplesField(qWordSet, cap, index, k1, b, exampleCeilings)
+
+  const score = exScore * 0.6
               + bm25Field(qWordSet, descTokens,  index, 'description', k1, b) * 0.3
               + bm25Field(qWordSet, nameTokens,  index, 'name',        k1, b) * 0.1
 
+  return score
+}
+
+/**
+ * Scores a query against a capability's examples — one example at a time,
+ * never as one combined/joined field. Each example is normalized against its
+ * OWN ceiling (the example's self-match score) before taking the max across
+ * examples. This is what makes confidence independent of example count: a
+ * capability with 1 example and a capability with 16 examples score the same
+ * way for an equally-good match, because each example is judged against its
+ * own achievable ceiling, never a shared one inflated by an unrelated example's
+ * rare vocabulary or penalized by combined-field length normalization.
+ *
+ * When exampleCeilings is omitted (only during calibration itself, to avoid
+ * recursion), returns the raw unnormalized max BM25 score across examples.
+ */
+function scoreExamplesField(
+  qWordSet: Set<string>,
+  cap: Capability,
+  index: BM25Index,
+  k1: number,
+  b: number,
+  exampleCeilings?: number[]
+): number {
+  const tokens = index.capTokens[cap.id]
+  const perExampleTokens = tokens?.examples ?? (cap.examples ?? []).map(ex => tokenize(ex))
+  if (perExampleTokens.length === 0) return 0
+
+  let best = 0
+  perExampleTokens.forEach((exTokens, i) => {
+    const raw = bm25SingleExample(qWordSet, exTokens, index, k1, b)
+    if (!exampleCeilings) {
+      // Calibration pass — no ceilings yet, return raw score
+      if (raw > best) best = raw
+      return
+    }
+    const ceiling = exampleCeilings[i] || 1
+    const normalized = (raw / ceiling) * 100
+    if (normalized > best) best = normalized
+  })
+  return best
+}
+
+/** BM25 score for one example's token array against the query — uses
+ *  avgdlPerExample (average length of a single example across the corpus),
+ *  not the combined-field average, so length normalization measures a single
+ *  phrasing against other single phrasings, not against multi-example fields. */
+function bm25SingleExample(
+  queryTerms: Set<string>,
+  exTokens: string[],
+  index: BM25Index,
+  k1: number,
+  b: number
+): number {
+  if (exTokens.length === 0) return 0
+
+  const avgdl = index.avgdlPerExample || 1
+  const dl    = exTokens.length
+  const tf    = new Map<string, number>()
+  for (const t of exTokens) tf.set(t, (tf.get(t) ?? 0) + 1)
+
+  let score = 0
+  for (const term of queryTerms) {
+    const termTf = tf.get(term) ?? 0
+    if (termTf === 0) continue
+    const df  = index.df[term] ?? 0
+    const idf = Math.log((index.N - df + 0.5) / (df + 0.5) + 1)
+    const tfNorm = (termTf * (k1 + 1)) / (termTf + k1 * (1 - b + b * (dl / avgdl)))
+    score += idf * tfNorm
+  }
   return score
 }
 
@@ -254,7 +354,7 @@ function bm25Field(
   queryTerms: Set<string>,
   fieldTokens: string[],
   index:       BM25Index,
-  field:       'examples' | 'description' | 'name',
+  field:       'description' | 'name',
   k1:          number,
   b:           number
 ): number {
@@ -539,36 +639,80 @@ export interface MatchOptions {
   bm25Index?:      BM25Index   // pre-built index — pass from CapmanEngine for performance
   bm25K1?:         number      // TF saturation (default: 1.5)
   bm25B?:          number      // length normalization (default: 0.75)
-  bm25Ceiling?:    Map<string, number>  // per-capability normalization ceiling — pre-calibrated by CapmanEngine
+  bm25Ceiling?:    Map<string, number>    // per-capability normalization ceiling — pre-calibrated by CapmanEngine
+  bm25ExampleCeilings?: Map<string, number[]>  // per-example normalization ceilings — pre-calibrated by CapmanEngine
   /** Pre-computed cosine similarity scores keyed by capability ID (0–100). Engine passes these when an EmbeddingProvider is configured. */
   embeddingScores?: Map<string, number>
+}
+
+/**
+ * Calibrates ONE ceiling PER EXAMPLE, not one ceiling per capability.
+ * Each example's ceiling is its own self-match score — this is what makes
+ * confidence independent of how many examples a capability has. A query that
+ * matches example #3 verbatim is judged against example #3's own achievable
+ * ceiling, never against a different example's unrelated (possibly higher,
+ * rarer-vocabulary) self-score. Must be called BEFORE calibrateCeiling(),
+ * since calibrateCeiling() needs these to compute a coherent overall ceiling.
+ */
+export function calibrateExampleCeilings(
+  capabilities: Capability[],
+  bm25Index: BM25Index,
+  k1: number,
+  b: number
+): Map<string, number[]> {
+  const ceilings = new Map<string, number[]>()
+  for (const cap of capabilities) {
+    const tokens = bm25Index.capTokens[cap.id]
+    const perExampleTokens = tokens?.examples ?? (cap.examples ?? []).map(ex => tokenize(ex))
+    const perExampleCeilings = perExampleTokens.map(exTokens => {
+      const exWords = new Set(exTokens)
+      const raw = bm25SingleExampleExported(exWords, exTokens, bm25Index, k1, b)
+      return raw > 0 ? raw : 1
+    })
+    ceilings.set(cap.id, perExampleCeilings)
+  }
+  return ceilings
+}
+
+// Internal alias — bm25SingleExample is not exported to keep the public surface
+// minimal, but calibrateExampleCeilings needs the identical scoring path used
+// at match time.
+function bm25SingleExampleExported(
+  queryTerms: Set<string>,
+  exTokens: string[],
+  index: BM25Index,
+  k1: number,
+  b: number
+): number {
+  return bm25SingleExample(queryTerms, exTokens, index, k1, b)
 }
 
 export function calibrateCeiling(
   capabilities: Capability[],
   bm25Index: BM25Index,
   k1: number,
-  b: number
+  b: number,
+  exampleCeilings?: Map<string, number[]>
 ): Map<string, number> {
   const ceilings = new Map<string, number>()
   for (const cap of capabilities) {
     let max = 0
+    const capExampleCeilings = exampleCeilings?.get(cap.id)
     // Calibrate against the capability's OWN examples — the same signal a real
     // query is expected to resemble, scored through the identical weighted
     // BM25 function used at match time (examples 0.6, description 0.3, name 0.1).
-    // This keeps calibration aligned with what's actually measured — a capability
-    // is never inflated or suppressed just because its description happens to be
-    // longer or shorter than another capability's.
+    // Examples are pre-normalized per-example (capExampleCeilings) before being
+    // weighted in, so this overall ceiling reflects a coherent best-case score.
     for (const example of cap.examples ?? []) {
       const exWords = new Set(tokenize(example))
-      const raw = scoreCapability(exWords, cap, bm25Index, k1, b)
+      const raw = scoreCapability(exWords, cap, bm25Index, k1, b, capExampleCeilings)
       if (raw > max) max = raw
     }
     // Fallback for capabilities with no examples — name+description probe,
     // since there's no example signal available to calibrate against.
     if (max === 0) {
       const selfWords = new Set(tokenize(cap.name + ' ' + cap.description))
-      max = scoreCapability(selfWords, cap, bm25Index, k1, b)
+      max = scoreCapability(selfWords, cap, bm25Index, k1, b, capExampleCeilings)
     }
     ceilings.set(cap.id, max > 0 ? max : 100)
   }
@@ -658,8 +802,13 @@ export function match(
       const k1        = options.bm25K1 ?? 1.5
       const b         = options.bm25B  ?? 0.75
 
+  // Calibrate example ceilings FIRST — calibrateCeiling() depends on them to
+  // produce a coherent overall per-capability ceiling.
+  const exampleCeilings = options.bm25ExampleCeilings
+    ?? calibrateExampleCeilings(manifest.capabilities, bm25Index, k1, b)
   // Calibrate per-capability ceilings for normalization
-  const ceilings = options.bm25Ceiling ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b)
+  const ceilings = options.bm25Ceiling
+    ?? calibrateCeiling(manifest.capabilities, bm25Index, k1, b, exampleCeilings)
 
   // Build per-source ranked lists for RRF fusion
   const keywordRanking:   Array<{ id: string; score: number }> = []
@@ -673,7 +822,7 @@ export function match(
   // isolation — it needs visibility into the full set of scores first.
   const rawKeywordScores = new Map<string, number>()
   for (const cap of manifest.capabilities) {
-    const rawBM25     = scoreCapability(qWordSet, cap, bm25Index, k1, b)
+    const rawBM25     = scoreCapability(qWordSet, cap, bm25Index, k1, b, exampleCeilings.get(cap.id))
     const capCeiling  = ceilings.get(cap.id) ?? 100
     const bm25Score   = Math.min(100, Math.round((rawBM25 / capCeiling) * 100))
     const bonusPoints = bigramBonus(qBigrams, bm25Index.bigrams[cap.id] ?? new Set())
