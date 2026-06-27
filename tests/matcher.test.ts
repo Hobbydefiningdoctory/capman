@@ -256,6 +256,7 @@ describe('match()', () => {
       expect(stem('tracking')).toBe('track')
       expect(stem('ordered')).toBe('order')
       expect(stem('orders')).toBe('order')
+      expect(stem('order')).toBe('order')    // ER_EXCLUSIONS — root noun, not agent noun
       expect(stem('fetches')).toBe('fetch')
       expect(stem('quickly')).toBe('quick')
       expect(stem('class')).toBe('class')   // ss guard — not stripped
@@ -277,8 +278,31 @@ describe('match()', () => {
       const exampleTokens = new Set(tokenize('track shipment status'))
       expect(queryTokens.has('track')).toBe(true)
       expect(exampleTokens.has('track')).toBe(true)
-      // Note: single-pass stemmer — 'orders' → 'order', 'order' → 'ord'
-      // Use -ing forms for symmetry tests since they reduce to the root in one pass
+    // order/orders are now symmetric — both stem to 'order' via ER_EXCLUSIONS
+      const orderQuery   = new Set(tokenize('cancel order'))
+      const orderExample = new Set(tokenize('cancel orders'))
+      expect(orderQuery.has('order')).toBe(true)
+      expect(orderExample.has('order')).toBe(true)
+    })
+
+    it('ER_EXCLUSIONS — common API root nouns not stripped to non-words', () => {
+      // These words end in 'er' but are root nouns, not agent nouns.
+      // Stripping 'er' would produce non-words (ord, custom, serv, manag)
+      // and break matching between singular query forms and plural examples.
+      expect(stem('order')).toBe('order')
+      expect(stem('customer')).toBe('customer')
+      expect(stem('server')).toBe('server')
+      expect(stem('manager')).toBe('manager')
+      expect(stem('member')).toBe('member')
+      expect(stem('folder')).toBe('folder')
+      expect(stem('parameter')).toBe('parameter')
+      expect(stem('number')).toBe('number')
+      expect(stem('header')).toBe('header')
+      expect(stem('provider')).toBe('provider')
+      // Agent nouns SHOULD still strip — these are correct behavior
+      expect(stem('tracker')).toBe('track')
+      expect(stem('fetcher')).toBe('fetch')
+      expect(stem('builder')).toBe('build')
     })
 
     it('tokenize splits camelCase before lowercasing (Bug 2)', () => {

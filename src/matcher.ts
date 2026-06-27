@@ -98,6 +98,20 @@ const EST_EXCLUSIONS = new Set([
   'contest', 'forest', 'harvest', 'arest', 'modest', 'honest',
 ])
 
+const ER_EXCLUSIONS = new Set([
+  // Core business/API nouns — most common in real manifests
+  'order', 'customer', 'number', 'member', 'server',
+  'manager', 'folder', 'parameter', 'header', 'footer',
+  // Infrastructure and system nouns
+  'buffer', 'trigger', 'banner', 'container', 'register',
+  'cluster', 'provider', 'subscriber', 'publisher', 'consumer',
+  'identifier', 'modifier', 'reminder', 'dispatcher',
+  // Common English words where stem would be wrong or non-word
+  'border', 'layer', 'offer', 'cover', 'deliver',
+  'consider', 'recover', 'discover', 'transfer', 'render',
+  'center', 'master', 'quarter',
+])
+
 const stemCache = new Map<string, string>()
 
 /**
@@ -116,9 +130,10 @@ export function stem(word: string): string {
   else if (s.length > 6 && s.endsWith('ing'))   s = s.slice(0, -3)  // tracking → track
   else if (s.length > 6 && s.endsWith('ity'))   s = s.slice(0, -3)  // availability → availabil
   else if (s.length > 5 && s.endsWith('ion'))   s = s.slice(0, -3)  // version → vers
-    else if (s.length > 6 && s.endsWith('est') &&
-             !EST_EXCLUSIONS.has(s))               s = s.slice(0, -3)  // fastest → fast (NOT manifest/request)
-  else if (s.length > 4 && s.endsWith('er'))    s = s.slice(0, -2)  // tracker → track
+  else if (s.length > 6 && s.endsWith('est') &&
+          !EST_EXCLUSIONS.has(s))               s = s.slice(0, -3)  // fastest → fast (NOT manifest/request)
+  else if (s.length > 4 && s.endsWith('er') &&
+          !ER_EXCLUSIONS.has(s))               s = s.slice(0, -2)  // tracker → track (NOT order/customer/server)
   else if (s.length > 4 && s.endsWith('ed'))    s = s.slice(0, -2)  // ordered → order
   else if (s.length > 4 && s.endsWith('ly'))    s = s.slice(0, -2)  // quickly → quick
   else if (s.length > 4 && s.endsWith('es'))    s = s.slice(0, -2)  // fetches → fetch
